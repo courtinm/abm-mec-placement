@@ -1,0 +1,18 @@
+
+parameters:
+    area: 4km x 4km
+    infection radius: 1m
+    infection probability:
+        starting: 0%
+        daily increase: 1%
+        maximum: 10%
+
+
+base_scenario:
+    Using the base parameters stated above.
+
+quarantine:
+    Diagnosed patients stay home for the full duration.
+
+vaccination:
+

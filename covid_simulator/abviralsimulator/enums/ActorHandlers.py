@@ -1,0 +1,12 @@
+from enum import IntEnum
+
+
+class ActorHandlers(IntEnum):
+    DYING_PROBABILITY = 1
+    TRANSMISSION_PROBABILITY = 2
+    MOVEMENT = 3
+    HOME_LOCATION = 4
+    AT_HOME_DURATION = 5
+    INITIALLY_INFECTED = 6
+    TESTING_PROBABILITY = 7
+    VACCINATION_PRIORITY = 8
