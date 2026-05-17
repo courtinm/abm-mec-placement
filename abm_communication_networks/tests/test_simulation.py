@@ -8,7 +8,7 @@ from agents.base_station import BaseStation
 from agents.relay_node import RelayNode
 from agents.user_device import UserDevice
 
-
+# Note: These tests focus on core logic and do not cover visualization or randomness aspects.
 class TestSimulation(unittest.TestCase):
     def setUp(self):
         self.simulator = Simulator()
