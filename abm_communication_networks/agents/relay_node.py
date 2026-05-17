@@ -52,6 +52,7 @@ class RelayNode:
         self.agent = QAgent(id)
         self.possible_positions = self.generate_possible_positions()
         self.last_action = 0
+        self.id_BS = None
 
         # Learning logs
         self.q_history = []
@@ -108,11 +109,11 @@ class RelayNode:
         self.q_history.append(avg_q)
         self.epsilon_history.append(self.agent.epsilon)
 
-    def save_learning_logs(self):
-        os.makedirs("logs", exist_ok=True)
-        with open(f"logs/rn{self.id}_q.pkl", "wb") as f:
+    def save_learning_logs(self, output_dir="logs"):
+        os.makedirs(output_dir, exist_ok=True)
+        with open(os.path.join(output_dir, f"rn{self.id}_q.pkl"), "wb") as f:
             pickle.dump(self.q_history, f)
-        with open(f"logs/rn{self.id}_epsilon.pkl", "wb") as f:
+        with open(os.path.join(output_dir, f"rn{self.id}_epsilon.pkl"), "wb") as f:
             pickle.dump(self.epsilon_history, f)
 
     def distance(self, user_pos):

@@ -3,6 +3,8 @@ import random
 import os
 import csv
 from agents.relay_node import evaluate_and_adjust_relay_nodes
+from agents.base_station import BaseStation
+from agents.relay_node import RelayNode
 
 def is_line_blocked(src, dst, obstacles, allow_through_large=False):
     x1, y1 = src
@@ -42,6 +44,9 @@ class MetricsLogger:
         self.handoffs = []
         self.optimal_connections = []
         self.prev_connections = {}
+        self.hop_count_to_BS = {}  #contains each UE connected to a BS with CR the number of hops
+        self.hop_count_to_core_network = {} #contains each UE connected to a BS without CR so the compute is done in the core network
+        self.hop_counts_log = []  # accumulates (step, user_id, target, hop_count) for CSV
 
     def log(self, step, users):
         total_latency = []
@@ -50,8 +55,29 @@ class MetricsLogger:
         handoffs = 0
         optimal = 0
 
+        # Reset each step — connections change as users move
+        self.hop_count_to_BS = {}
+        self.hop_count_to_core_network = {}
+
+        rows_before = len(self.hop_counts_log)
+
         for user in users:
             connected = user.connected_to is not None
+
+            # Count hops to compute resource
+            if isinstance(user.connected_to, BaseStation):
+                if user.connected_to.has_compute_resource:
+                    self.hop_count_to_BS[user.id] = 1
+                    self.hop_counts_log.append((step, user.id, "BS", 1))
+                else:
+                    # TODO (IAB): add BS->core segment once multi-hop routing is implemented
+                    self.hop_count_to_core_network[user.id] = 1
+                    self.hop_counts_log.append((step, user.id, "Core", 1))
+            elif isinstance(user.connected_to, RelayNode):
+                # TODO (IAB): hop count will be 2 (user->RN->BS) once multi-hop routing is implemented
+                self.hop_counts_log.append((step, user.id, "RN", ""))
+            else:
+                self.hop_counts_log.append((step, user.id, "Disconnected", ""))
 
             if connected:
                 dist = math.dist(user.position, user.connected_to.position)
@@ -74,6 +100,12 @@ class MetricsLogger:
 
             self.prev_connections[user.id] = user.connected_to
 
+        assert len(self.hop_counts_log) - rows_before == len(users), (
+            f"Step {step}: expected {len(users)} hop rows, got {len(self.hop_counts_log) - rows_before}"
+        )
+
+        print(f"[Step {step}] hop_to_BS={len(self.hop_count_to_BS)} hop_to_core={len(self.hop_count_to_core_network)}")
+
         avg_latency = sum(total_latency) / len(total_latency) if total_latency else 0
         max_latency = max(total_latency) if total_latency else 0
         optimal_pct = (optimal / len(users)) * 100 if users else 0
@@ -85,6 +117,8 @@ class MetricsLogger:
         self.handoffs.append((step, handoffs))
         self.optimal_connections.append((step, optimal_pct))
 
+
+
     def save_all(self, folder="logs"):
         os.makedirs(folder, exist_ok=True)
 
@@ -94,6 +128,12 @@ class MetricsLogger:
         self._save_csv(os.path.join(folder, "nlos_connections.csv"), self.nlos_connections)
         self._save_csv(os.path.join(folder, "handoffs.csv"), self.handoffs)
         self._save_csv(os.path.join(folder, "optimal_connections.csv"), self.optimal_connections)
+
+        hop_path = os.path.join(folder, "hop_counts.csv")
+        with open(hop_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Step", "UserID", "Target", "HopCount"])
+            writer.writerows(self.hop_counts_log)
 
     def _save_csv(self, path, data):
         with open(path, "w", newline="") as f:
@@ -204,23 +244,23 @@ class Simulator:
 
         self.metrics.log(self.timestep, self.users)
 
-    def finalize(self):
-        os.makedirs("logs", exist_ok=True)
+    def finalize(self, output_dir="logs"):
+        os.makedirs(output_dir, exist_ok=True)
 
         for rn in self.relay_nodes:
-            filename = f"logs/rn{rn.id}_learning.csv"
+            filename = os.path.join(output_dir, f"rn{rn.id}_learning.csv")
             with open(filename, "w", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow(["Step", "Max_Q", "Epsilon"])
                 for i, (q, eps) in enumerate(zip(rn.q_history, rn.epsilon_history)):
                     writer.writerow([i, q, eps])
-            rn.save_learning_logs()
+            rn.save_learning_logs(output_dir)
 
-        self.metrics.save_all("logs")
+        self.metrics.save_all(output_dir)
 
-        debug_file = f"logs/debug_step_{self.timestep}.log"
+        debug_file = os.path.join(output_dir, f"debug_step_{self.timestep}.log")
         with open(debug_file, "w") as f:
             f.write(f"Step: {self.timestep}\n")
             f.write("\n".join(self.debug_logs))
 
-        print(f"[Logs saved to 'logs/' folder.")
+        print(f"[Logs saved to '{output_dir}/' folder.")

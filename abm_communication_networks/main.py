@@ -1,6 +1,7 @@
-import pygame, sys, random
+import random
 from simulation.simulator import Simulator
 from agents.base_station import BaseStation
+from agents.base_station import ComputeRessources
 from agents.relay_node import RelayNode
 from agents.user_device import UserDevice
 
@@ -14,25 +15,23 @@ def to_screen(pos):
     y = max(0, min(int(pos[1] / 100 * HEIGHT), HEIGHT - 1))
     return x, y
 
-def main():
-    pygame.init()
-    screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    clock = pygame.time.Clock()
-    font = pygame.font.SysFont(None, 20)
-
+def build_simulation():
     sim = Simulator(grid_size=100)
 
-    sim.add_base_station(BaseStation(1, (10, 10), capacity=50, bs_type="macro"))
+    BaseStation1_with_CR1 = BaseStation(1, (10, 10), capacity=50, bs_type="macro")
+    sim.add_base_station(BaseStation1_with_CR1)
+    CR1 = ComputeRessources(1, BaseStation1_with_CR1.position, 10, 0)
+    BaseStation1_with_CR1.has_compute_resource = True
+    BaseStation1_with_CR1.compute_resource = CR1
+
     sim.add_base_station(BaseStation(2, (80, 80), capacity=30, bs_type="small"))
     sim.add_base_station(BaseStation(3, (10, 90), capacity=50, bs_type="macro"))  # New Macro BS (bottom-left)
     sim.add_base_station(BaseStation(4, (90, 10), capacity=30, bs_type="small"))  # New Small BS (top-right)
-
 
     sim.add_relay_node(RelayNode(1, (30, 30), throughput=30))
     sim.add_relay_node(RelayNode(2, (60, 60), throughput=30))
     #sim.add_relay_node(RelayNode(3, (50, 20), throughput=30))
     #sim.add_relay_node(RelayNode(4, (20, 50), throughput=30))
-
 
     for obs in [(45, 45), (50, 50, "large"), (55, 45), (45, 55, "large")]:
         if len(obs) == 2:
@@ -42,6 +41,17 @@ def main():
 
     for i in range(20):
         sim.add_user(UserDevice(i + 1, (random.randint(0, 100), random.randint(0, 100))))
+
+    return sim
+
+def main():
+    import pygame, sys
+    pygame.init()
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    clock = pygame.time.Clock()
+    font = pygame.font.SysFont(None, 20)
+
+    sim = build_simulation()
 
     running = True
     while running:
@@ -66,6 +76,8 @@ def main():
             x, y = to_screen(bs.position)
             color = (0, 0, 255) if bs.bs_type == "macro" else (0, 100, 255)
             radius = 14 if bs.bs_type == "macro" else 8
+            if bs.has_compute_resource: #we identify the BS with CR by coloring them in orange
+                color = (255, 165, 0)
             pygame.draw.circle(screen, color, (x, y), radius)
             txt = font.render(f"BS{bs.id}:{bs.current_load}", True, (255, 255, 255))
             screen.blit(txt, (x + 10, y - 10))
@@ -89,7 +101,7 @@ def main():
         # Users
         for u in sim.users:
             x, y = to_screen(u.position)
-            color = (255, 0, 0) if u.connected_to else (100, 100, 100)
+            color = (255, 0, 0) if u.connected_to else (100, 100, 100) #so every UE is in red if correctly attached
             pygame.draw.circle(screen, color, (x, y), 6)
             txt = font.render(f"U{u.id}", True, (255, 255, 255))
             screen.blit(txt, (x + 5, y + 5))

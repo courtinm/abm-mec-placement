@@ -1,5 +1,15 @@
 from math import isclose
 
+#this class presents the CR
+class ComputeRessources:
+    def __init__(self, id, position, capacity, current_load):
+        self.id = id
+        self.position = position
+        self.capacity = capacity
+        self.current_load = current_load
+
+
+
 class BaseStation:
     def __init__(self, id, position, capacity, bs_type="macro", tx_power=20, custom_range=None):
         self.id = id
@@ -10,6 +20,8 @@ class BaseStation:
         self.energy_consumed = 0
         self.status = "active"  # or "failed"
         self.bs_type = bs_type.lower()
+        self.has_compute_resource = False  # as I don't put CR at each BS, the BS should mention if it has CR
+        self.compute_resource = None #to access the details concerning the CR
 
         # Assigning range based on type, unless overridden
         if custom_range is not None:
