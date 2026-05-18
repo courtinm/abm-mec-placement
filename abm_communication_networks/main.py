@@ -5,7 +5,7 @@ from agents.base_station import ComputeRessources
 from agents.relay_node import RelayNode
 from agents.user_device import UserDevice
 
-# Screen settings
+# Screen settings 
 WIDTH, HEIGHT = 800, 600
 BG_COLOR = (30, 30, 40)
 FPS = 1
@@ -15,31 +15,33 @@ def to_screen(pos):
     y = max(0, min(int(pos[1] / 100 * HEIGHT), HEIGHT - 1))
     return x, y
 
-def build_simulation():
-    sim = Simulator(grid_size=100)
+def build_simulation(config=None):
+    if config is None:
+        from configs.default import CONFIG
+        config = CONFIG
 
-    BaseStation1_with_CR1 = BaseStation(1, (10, 10), capacity=50, bs_type="macro")
-    sim.add_base_station(BaseStation1_with_CR1)
-    CR1 = ComputeRessources(1, BaseStation1_with_CR1.position, 10, 0)
-    BaseStation1_with_CR1.has_compute_resource = True
-    BaseStation1_with_CR1.compute_resource = CR1
+    sim = Simulator(grid_size=config.get("grid_size", 100))
 
-    sim.add_base_station(BaseStation(2, (80, 80), capacity=30, bs_type="small"))
-    sim.add_base_station(BaseStation(3, (10, 90), capacity=50, bs_type="macro"))  # New Macro BS (bottom-left)
-    sim.add_base_station(BaseStation(4, (90, 10), capacity=30, bs_type="small"))  # New Small BS (top-right)
+    for i, bs_cfg in enumerate(config["base_stations"]):
+        bs = BaseStation(
+            i + 1,
+            (bs_cfg["x"], bs_cfg["y"]),
+            capacity=bs_cfg.get("capacity", 30),
+            bs_type=bs_cfg.get("type", "macro"),
+        )
+        sim.add_base_station(bs)
+        if bs_cfg.get("has_compute_resource", False):
+            cr = ComputeRessources(i + 1, bs.position, 10, 0)
+            bs.has_compute_resource = True
+            bs.compute_resource = cr
 
-    sim.add_relay_node(RelayNode(1, (30, 30), throughput=30))
-    sim.add_relay_node(RelayNode(2, (60, 60), throughput=30))
-    #sim.add_relay_node(RelayNode(3, (50, 20), throughput=30))
-    #sim.add_relay_node(RelayNode(4, (20, 50), throughput=30))
+    for i, rn_cfg in enumerate(config["relay_nodes"]):
+        sim.add_relay_node(RelayNode(i + 1, (rn_cfg["x"], rn_cfg["y"]), throughput=rn_cfg.get("throughput", 30)))
 
-    for obs in [(45, 45), (50, 50, "large"), (55, 45), (45, 55, "large")]:
-        if len(obs) == 2:
-            sim.add_obstacle(obs, size='small')
-        else:
-            sim.add_obstacle((obs[0], obs[1]), size='large')
+    for obs_cfg in config["obstacles"]:
+        sim.add_obstacle((obs_cfg["x"], obs_cfg["y"]), size=obs_cfg.get("size", "small"))
 
-    for i in range(20):
+    for i in range(config["n_users"]):
         sim.add_user(UserDevice(i + 1, (random.randint(0, 100), random.randint(0, 100))))
 
     return sim
