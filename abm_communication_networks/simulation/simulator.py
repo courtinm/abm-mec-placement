@@ -6,6 +6,11 @@ from agents.relay_node import evaluate_and_adjust_relay_nodes
 from agents.base_station import BaseStation
 from agents.relay_node import RelayNode
 
+# Total downlink throughput per BS type (Mbps).
+# Macro: 5G NR 100 MHz @ ~10 b/s/Hz; Small: LTE-A 20 MHz @ ~10 b/s/Hz.
+# Per-user rate = _BS_THROUGHPUT_MBPS[bs_type] / current_load.
+_BS_THROUGHPUT_MBPS = {"macro": 1000.0, "small": 200.0}
+
 def is_line_blocked(src, dst, obstacles, allow_through_large=False):
     x1, y1 = src
     x2, y2 = dst
@@ -47,6 +52,8 @@ class MetricsLogger:
         self.hop_count_to_BS = {}  #contains each UE connected to a BS with CR the number of hops
         self.hop_count_to_core_network = {} #contains each UE connected to a BS without CR so the compute is done in the core network
         self.hop_counts_log = []  # accumulates (step, user_id, target, hop_count) for CSV
+        self.satisfaction_users_log = []    # one row per user per step
+        self.satisfaction_summary_log = []  # one row per step
 
     def log(self, step, users):
         total_latency = []
@@ -64,20 +71,39 @@ class MetricsLogger:
         for user in users:
             connected = user.connected_to is not None
 
-            # Count hops to compute resource
+            # Count hops to compute resource and compute satisfaction
             if isinstance(user.connected_to, BaseStation):
-                if user.connected_to.has_compute_resource:
+                node = user.connected_to
+                total_mbps = _BS_THROUGHPUT_MBPS.get(node.bs_type, 200.0)
+                # data_rate in Mbps: node capacity shared equally among connected users
+                data_rate_mbps = total_mbps / max(1, node.current_load)
+                # TODO (Tier 3): add latency_threshold_ms condition when end-to-end latency model is implemented
+                user.is_satisfied = data_rate_mbps >= user.throughput_req_mbps
+                if node.has_compute_resource:
+                    target = "BS"
                     self.hop_count_to_BS[user.id] = 1
                     self.hop_counts_log.append((step, user.id, "BS", 1))
                 else:
+                    target = "Core"
                     # TODO (IAB): add BS->core segment once multi-hop routing is implemented
                     self.hop_count_to_core_network[user.id] = 1
                     self.hop_counts_log.append((step, user.id, "Core", 1))
             elif isinstance(user.connected_to, RelayNode):
+                target = "RN"
+                data_rate_mbps = 0.0
+                user.is_satisfied = False
                 # TODO (IAB): hop count will be 2 (user->RN->BS) once multi-hop routing is implemented
                 self.hop_counts_log.append((step, user.id, "RN", ""))
             else:
+                target = "Disconnected"
+                data_rate_mbps = 0.0
+                user.is_satisfied = False
                 self.hop_counts_log.append((step, user.id, "Disconnected", ""))
+
+            self.satisfaction_users_log.append((
+                step, user.id, user.app_type, user.throughput_req_mbps,
+                round(data_rate_mbps, 2), target, user.is_satisfied,
+            ))
 
             if connected:
                 dist = math.dist(user.position, user.connected_to.position)
@@ -103,6 +129,26 @@ class MetricsLogger:
         assert len(self.hop_counts_log) - rows_before == len(users), (
             f"Step {step}: expected {len(users)} hop rows, got {len(self.hop_counts_log) - rows_before}"
         )
+
+        app_keys = ["AR_VR", "streaming", "best_effort"]
+        n_by_app = {a: 0 for a in app_keys}
+        sat_by_app = {a: 0 for a in app_keys}
+        for user in users:
+            n_by_app[user.app_type] += 1
+            if user.is_satisfied:
+                sat_by_app[user.app_type] += 1
+        n_total = len(users)
+        n_sat = sum(sat_by_app.values())
+
+        def _rate(a):
+            return round(sat_by_app[a] / n_by_app[a], 4) if n_by_app[a] else 0.0
+
+        self.satisfaction_summary_log.append((
+            step, n_total, n_sat, round(n_sat / n_total, 4) if n_total else 0.0,
+            n_by_app["AR_VR"],      sat_by_app["AR_VR"],      _rate("AR_VR"),
+            n_by_app["streaming"],  sat_by_app["streaming"],   _rate("streaming"),
+            n_by_app["best_effort"],sat_by_app["best_effort"], _rate("best_effort"),
+        ))
 
         print(f"[Step {step}] hop_to_BS={len(self.hop_count_to_BS)} hop_to_core={len(self.hop_count_to_core_network)}")
 
@@ -134,6 +180,20 @@ class MetricsLogger:
             writer = csv.writer(f)
             writer.writerow(["Step", "UserID", "Target", "HopCount"])
             writer.writerows(self.hop_counts_log)
+
+        with open(os.path.join(folder, "satisfaction_users.csv"), "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Step", "UserID", "AppType", "ThroughputReq_Mbps",
+                             "DataRate_Mbps", "Target", "Satisfied"])
+            writer.writerows(self.satisfaction_users_log)
+
+        with open(os.path.join(folder, "satisfaction_summary.csv"), "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Step", "N_Total", "N_Satisfied", "Rate_Global",
+                             "N_AR_VR", "Sat_AR_VR", "Rate_AR_VR",
+                             "N_Streaming", "Sat_Streaming", "Rate_Streaming",
+                             "N_BestEffort", "Sat_BestEffort", "Rate_BestEffort"])
+            writer.writerows(self.satisfaction_summary_log)
 
     def _save_csv(self, path, data):
         with open(path, "w", newline="") as f:
@@ -225,7 +285,7 @@ class Simulator:
                     best_node.current_load += 1
                     user.has_los = False
                     connected = True
-                    log_line = f"[User {user.id}] ⚠️ Connected to node {best_node.id} WITHOUT line-of-sight (penalty applied)"
+                    log_line = f"[User {user.id}] Connected to node {best_node.id} WITHOUT line-of-sight (penalty applied)"
                     print(log_line)
                     self.debug_logs.append(log_line)
                 else:

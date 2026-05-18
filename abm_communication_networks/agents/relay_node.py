@@ -134,9 +134,9 @@ def evaluate_and_adjust_relay_nodes(relay_nodes, users, max_rns=15, min_rns=2):
         new_id = max(rn.id for rn in relay_nodes) + 1
         new_rn = RelayNode(new_id, position=(50, 50))  # Optional: smarter placement
         relay_nodes.append(new_rn)
-        print(f"[Controller] ➕ Added RN{new_id}")
+        print(f"[Controller] Added RN{new_id}")
 
     elif len(idle_rns) >= 2 and len(relay_nodes) > min_rns:
         to_remove = idle_rns[0]
         relay_nodes.remove(to_remove)
-        print(f"[Controller] ➖ Removed RN{to_remove.id}")
+        print(f"[Controller] Removed RN{to_remove.id}")

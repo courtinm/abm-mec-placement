@@ -1,5 +1,6 @@
 CONFIG = {
     "grid_size": 100,
+    "app_mix": {"AR_VR": 0.1, "streaming": 0.3, "best_effort": 0.6},
     "n_users": 10,
     "user_mobility": "high",
     "base_stations": [

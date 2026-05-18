@@ -1,6 +1,7 @@
 # Mirrors the hardcoded setup that was in main.py before the config refactor.
 CONFIG = {
     "grid_size": 100,
+    "app_mix": {"AR_VR": 0.0, "streaming": 0.0, "best_effort": 1.0},
     "n_users": 20,
     "user_mobility": "high",
     "base_stations": [

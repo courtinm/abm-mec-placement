@@ -41,8 +41,24 @@ def build_simulation(config=None):
     for obs_cfg in config["obstacles"]:
         sim.add_obstacle((obs_cfg["x"], obs_cfg["y"]), size=obs_cfg.get("size", "small"))
 
+    app_specs = {
+        "AR_VR":       {"latency_threshold_ms": 10,  "throughput_req_mbps": 25},
+        "streaming":   {"latency_threshold_ms": 50,  "throughput_req_mbps": 10},
+        "best_effort": {"latency_threshold_ms": 200, "throughput_req_mbps": 1},
+    }
+    mix = config.get("app_mix", {"AR_VR": 0.0, "streaming": 0.0, "best_effort": 1.0})
+    app_types = list(mix.keys())
+    app_weights = list(mix.values())
+
     for i in range(config["n_users"]):
-        sim.add_user(UserDevice(i + 1, (random.randint(0, 100), random.randint(0, 100))))
+        app_type = random.choices(app_types, weights=app_weights)[0]
+        specs = app_specs[app_type]
+        sim.add_user(UserDevice(
+            i + 1,
+            (random.randint(0, 100), random.randint(0, 100)),
+            app_type=app_type,
+            **specs,
+        ))
 
     return sim
 
