@@ -1,5 +1,15 @@
+# Generated experiment outputs — regenerate with run_experiment.py
 logs/
+models/
+metrics/
+
+# Generated plots — regenerate with plots/plot_results.py
+plots/*.png
+
+# Python
 __pycache__/
-*.pkl
+*.py[cod]
 .pytest_cache/
-*.pyc
+
+# Claude Code
+.claude/

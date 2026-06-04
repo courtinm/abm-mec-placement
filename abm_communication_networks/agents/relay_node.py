@@ -12,15 +12,18 @@ class QAgent:
         self.epsilon = epsilon
         self.min_epsilon = 0.05
         self.decay_rate = 0.995  # slower decay
+        self.frozen = False  # when True: pure exploitation, no Q-table updates
 
     def select_action(self, state, actions):
         if state not in self.q_table:
             self.q_table[state] = {i: 0.0 for i in range(len(actions))}
-        if random.random() < self.epsilon:
+        if not self.frozen and random.random() < self.epsilon:
             return random.randint(0, len(actions) - 1)
         return max(self.q_table[state], key=self.q_table[state].get)
 
     def update(self, state, action, reward, next_state, num_actions):
+        if self.frozen:
+            return
         if state not in self.q_table:
             self.q_table[state] = {i: 0.0 for i in range(num_actions)}
         if next_state not in self.q_table:
@@ -32,11 +35,19 @@ class QAgent:
         self.q_table[state][action] = new_q
         self.decay_epsilon()
 
-        # Optional: Debug print
-        print(f"[RN{self.id}] Q-update: State={state}, Action={action}, OldQ={old_q:.2f}, NewQ={new_q:.2f}, Reward={reward:.2f}")
-
     def decay_epsilon(self):
         self.epsilon = max(self.min_epsilon, self.epsilon * self.decay_rate)
+
+    def save_qtable(self, path):
+        dir_ = os.path.dirname(path)
+        if dir_:
+            os.makedirs(dir_, exist_ok=True)
+        with open(path, "wb") as f:
+            pickle.dump(self.q_table, f)
+
+    def load_qtable(self, path):
+        with open(path, "rb") as f:
+            self.q_table = pickle.load(f)
 
 
 class RelayNode:
@@ -52,7 +63,13 @@ class RelayNode:
         self.agent = QAgent(id)
         self.possible_positions = self.generate_possible_positions()
         self.last_action = 0
+        self.last_reward = 0.0
         self.id_BS = None
+        # Parent is assigned once at simulation startup and does NOT change
+        # when the RN moves via Q-learning (deliberate simplification —
+        # dynamic re-parenting is deferred as future work).
+        self.parent = None       # BaseStation or RelayNode, assigned at init
+        self.backhaul_los = False  # updated each step in simulator
 
         # Learning logs
         self.q_history = []
@@ -79,7 +96,6 @@ class RelayNode:
         action = self.agent.select_action(state, self.possible_positions)
         new_pos = self.possible_positions[action]
         self.move(new_pos)
-        print(f"[RN{self.id}] moved to {self.position}")
         self.last_action = action
         self.update_q_value(users, prev_state=state)
 
@@ -93,6 +109,7 @@ class RelayNode:
     def update_q_value(self, users, prev_state):
         connected_users = sum(1 for u in users if u.connected_to == self)
         reward = connected_users  # Encourages useful positions
+        self.last_reward = reward
         next_state = self.get_state(users)
         self.agent.update(prev_state, self.last_action, reward, next_state, len(self.possible_positions))
         self.log_learning()

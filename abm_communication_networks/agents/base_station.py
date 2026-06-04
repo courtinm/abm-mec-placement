@@ -2,11 +2,23 @@ from math import isclose
 
 #this class presents the CR
 class ComputeRessources:
-    def __init__(self, id, position, capacity, current_load):
+    def __init__(self, id, position, capacity_mbps, current_load):
         self.id = id
         self.position = position
-        self.capacity = capacity
+        self.capacity_mbps = capacity_mbps
         self.current_load = current_load
+        self.current_load_mbps = 0.0
+        self.demanded_load_mbps = 0.0
+
+    def can_serve(self, throughput_req_mbps):
+        return self.current_load_mbps + throughput_req_mbps <= self.capacity_mbps
+
+    def add_user(self, throughput_req_mbps):
+        self.current_load_mbps += throughput_req_mbps
+
+    @property
+    def utilization(self):
+        return self.demanded_load_mbps / self.capacity_mbps if self.capacity_mbps > 0 else 0.0
 
 
 
@@ -43,18 +55,6 @@ class BaseStation:
     def reset(self):
         """Reset load at the beginning of each simulation step."""
         self.current_load = 0
-
-    def can_see(self, point, obstacles):
-        """Return False if any obstacle lies exactly on the straight line segment."""
-        x1, y1 = self.position
-        x2, y2 = point
-        for ox, oy in obstacles:
-            # Check colinearity via cross-product ~0
-            if isclose((y2 - y1) * (ox - x1), (x2 - x1) * (oy - y1), abs_tol=1e-6):
-                # Then check if obstacle lies between endpoints
-                if min(x1, x2) <= ox <= max(x1, x2) and min(y1, y2) <= oy <= max(y1, y2):
-                    return False
-        return True
 
     def fail(self):
         self.status = "failed"

@@ -2,14 +2,22 @@ import math
 import random
 import os
 import csv
-from agents.relay_node import evaluate_and_adjust_relay_nodes
+from agents.relay_node import RelayNode, evaluate_and_adjust_relay_nodes
 from agents.base_station import BaseStation
-from agents.relay_node import RelayNode
 
 # Total downlink throughput per BS type (Mbps).
 # Macro: 5G NR 100 MHz @ ~10 b/s/Hz; Small: LTE-A 20 MHz @ ~10 b/s/Hz.
 # Per-user rate = _BS_THROUGHPUT_MBPS[bs_type] / current_load.
 _BS_THROUGHPUT_MBPS = {"macro": 1000.0, "small": 200.0}
+
+# End-to-end latency model.
+# Radio latency: dist_grid_units * _RADIO_LATENCY_SCALE ms  (0.1 ms/unit ≈ 1 ms / 10 m).
+# Core penalty: additional RTT when compute is routed to the core network rather than
+#               served locally by an edge CR (realistic estimate: 50 ms).
+# Backhaul: _HOP_LATENCY_MS per relay hop beyond the first.
+_RADIO_LATENCY_SCALE = 0.1   # ms per grid unit
+_CORE_LATENCY_MS    = 50.0   # ms added when compute hits the core network
+_HOP_LATENCY_MS     = 2.0    # ms per extra relay hop
 
 def is_line_blocked(src, dst, obstacles, allow_through_large=False):
     x1, y1 = src
@@ -40,6 +48,43 @@ def path_loss_mmwave(d, frequency_GHz=28, shadow_std=3.0):
     shadow = random.gauss(0, shadow_std)
     return pl + shadow
 
+def get_path_to_bs(node):
+    """
+    Walk up through parent links from node (a RelayNode) until a
+    BaseStation is reached.
+    Returns the list [node, parent1, ..., base_station].
+    HopCount for the user = len(returned list)
+        (1 hop per link: user->RN, RN->parent, ..., parent->BS)
+    Returns None if parent chain is broken (None encountered).
+    """
+    path = []
+    current = node
+    visited = set()
+    while not isinstance(current, BaseStation):
+        if current is None or id(current) in visited:
+            return None  # broken chain
+        visited.add(id(current))
+        path.append(current)
+        current = getattr(current, 'parent', None)
+    path.append(current)  # append the BS
+    return path
+
+
+def deployment_link_budget(src_pos, dst_pos, obstacles, frequency_GHz=28, nlos_penalty_dB=30.0):
+    """Deterministic path loss for deployment-time decisions (no shadow fading).
+    Adds nlos_penalty_dB if the link is blocked — 3GPP TR 38.901 typical value.
+    """
+    d = math.dist(src_pos, dst_pos)
+    if d == 0:
+        return -30
+    c = 3e8
+    lambda_ = c / (frequency_GHz * 1e9)
+    pl = 20 * math.log10(4 * math.pi * d / lambda_)
+    if is_line_blocked(src_pos, dst_pos, obstacles):
+        pl += nlos_penalty_dB
+    return pl
+
+
 class MetricsLogger:
     def __init__(self):
         self.latency_avg = []
@@ -54,6 +99,7 @@ class MetricsLogger:
         self.hop_counts_log = []  # accumulates (step, user_id, target, hop_count) for CSV
         self.satisfaction_users_log = []    # one row per user per step
         self.satisfaction_summary_log = []  # one row per step
+        self.cr_utilization_log = []        # one row per step per BS with CR
 
     def log(self, step, users):
         total_latency = []
@@ -77,28 +123,72 @@ class MetricsLogger:
                 total_mbps = _BS_THROUGHPUT_MBPS.get(node.bs_type, 200.0)
                 # data_rate in Mbps: node capacity shared equally among connected users
                 data_rate_mbps = total_mbps / max(1, node.current_load)
-                # TODO (Tier 3): add latency_threshold_ms condition when end-to-end latency model is implemented
-                user.is_satisfied = data_rate_mbps >= user.throughput_req_mbps
-                if node.has_compute_resource:
-                    target = "BS"
-                    self.hop_count_to_BS[user.id] = 1
-                    self.hop_counts_log.append((step, user.id, "BS", 1))
+                if node.has_compute_resource and node.compute_resource is not None:
+                    cr = node.compute_resource
+                    cr.demanded_load_mbps += user.throughput_req_mbps
+                    if cr.can_serve(user.throughput_req_mbps):
+                        cr.add_user(user.throughput_req_mbps)
+                        target = "BS"
+                        self.hop_count_to_BS[user.id] = 1
+                        self.hop_counts_log.append((step, user.id, "BS", 1, ""))
+                    else:
+                        target = "Core"
+                        self.hop_count_to_core_network[user.id] = 1
+                        self.hop_counts_log.append((step, user.id, "Core", 1, ""))
                 else:
                     target = "Core"
-                    # TODO (IAB): add BS->core segment once multi-hop routing is implemented
                     self.hop_count_to_core_network[user.id] = 1
-                    self.hop_counts_log.append((step, user.id, "Core", 1))
+                    self.hop_counts_log.append((step, user.id, "Core", 1, ""))
+                radio_ms = math.dist(user.position, node.position) * _RADIO_LATENCY_SCALE
+                compute_ms = 0.0 if target == "BS" else _CORE_LATENCY_MS
+                user.is_satisfied = (
+                    data_rate_mbps >= user.throughput_req_mbps
+                    and radio_ms + compute_ms <= user.latency_threshold_ms
+                )
             elif isinstance(user.connected_to, RelayNode):
-                target = "RN"
-                data_rate_mbps = 0.0
-                user.is_satisfied = False
-                # TODO (IAB): hop count will be 2 (user->RN->BS) once multi-hop routing is implemented
-                self.hop_counts_log.append((step, user.id, "RN", ""))
+                path = get_path_to_bs(user.connected_to)
+                if path is None:
+                    # Broken parent chain — should not happen
+                    print(f"[WARNING] Step {step}: broken parent chain for RN{user.connected_to.id}")
+                    target = "RN"
+                    data_rate_mbps = 0.0
+                    user.is_satisfied = False
+                    self.hop_counts_log.append((step, user.id, "RN", "", ""))
+                else:
+                    bs = path[-1]
+                    hop_count = len(path)
+                    rn = user.connected_to
+                    # data_rate in Mbps: RN throughput shared equally among its connected users
+                    data_rate_mbps = rn.throughput / max(1, rn.current_load)
+                    # backhaul_los is False if any RN in the path has a NLoS link to its parent
+                    backhaul_los = all(getattr(n, 'backhaul_los', True) for n in path[:-1])
+                    if bs.has_compute_resource and bs.compute_resource is not None:
+                        cr = bs.compute_resource
+                        cr.demanded_load_mbps += user.throughput_req_mbps
+                        if cr.can_serve(user.throughput_req_mbps):
+                            cr.add_user(user.throughput_req_mbps)
+                            target = "BS"
+                            self.hop_count_to_BS[user.id] = hop_count
+                        else:
+                            target = "Core"
+                            self.hop_count_to_core_network[user.id] = hop_count
+                    else:
+                        target = "Core"
+                        self.hop_count_to_core_network[user.id] = hop_count
+                    self.hop_counts_log.append((step, user.id, target, hop_count, backhaul_los))
+                    radio_ms    = math.dist(user.position, rn.position) * _RADIO_LATENCY_SCALE
+                    backhaul_ms = (hop_count - 1) * _HOP_LATENCY_MS
+                    compute_ms  = 0.0 if target == "BS" else _CORE_LATENCY_MS
+                    user.is_satisfied = (
+                        data_rate_mbps >= user.throughput_req_mbps
+                        and radio_ms + backhaul_ms + compute_ms <= user.latency_threshold_ms
+                        and backhaul_los
+                    )
             else:
                 target = "Disconnected"
                 data_rate_mbps = 0.0
                 user.is_satisfied = False
-                self.hop_counts_log.append((step, user.id, "Disconnected", ""))
+                self.hop_counts_log.append((step, user.id, "Disconnected", "", ""))
 
             self.satisfaction_users_log.append((
                 step, user.id, user.app_type, user.throughput_req_mbps,
@@ -178,7 +268,7 @@ class MetricsLogger:
         hop_path = os.path.join(folder, "hop_counts.csv")
         with open(hop_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["Step", "UserID", "Target", "HopCount"])
+            writer.writerow(["Step", "UserID", "Target", "HopCount", "BackhaulLoS"])
             writer.writerows(self.hop_counts_log)
 
         with open(os.path.join(folder, "satisfaction_users.csv"), "w", newline="") as f:
@@ -194,6 +284,11 @@ class MetricsLogger:
                              "N_Streaming", "Sat_Streaming", "Rate_Streaming",
                              "N_BestEffort", "Sat_BestEffort", "Rate_BestEffort"])
             writer.writerows(self.satisfaction_summary_log)
+
+        with open(os.path.join(folder, "cr_utilization.csv"), "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Step", "BS_ID", "CR_capacity_mbps", "CR_load_mbps", "CR_utilization"])
+            writer.writerows(self.cr_utilization_log)
 
     def _save_csv(self, path, data):
         with open(path, "w", newline="") as f:
@@ -211,6 +306,8 @@ class Simulator:
         self.timestep = 0
         self.debug_logs = []
         self.metrics = MetricsLogger()
+        self.cr_agent = None      # set externally to enable dynamic CR placement
+        self.dynamic_rn = True    # set to False in headless runs to disable auto add/remove RNs
 
     def add_base_station(self, bs):
         self.base_stations.append(bs)
@@ -234,11 +331,20 @@ class Simulator:
 
         for bs in self.base_stations:
             bs.reset()
+            if bs.has_compute_resource and bs.compute_resource is not None:
+                bs.compute_resource.current_load_mbps = 0.0
+                bs.compute_resource.demanded_load_mbps = 0.0
         for rn in self.relay_nodes:
             rn.reset()
 
         for rn in self.relay_nodes:
             rn.step(self.users)
+
+        for rn in self.relay_nodes:
+            if rn.parent is not None:
+                rn.backhaul_los = not is_line_blocked(
+                    rn.position, rn.parent.position, self.obstacles
+                )
 
         for user in self.users:
             user.has_los = False
@@ -299,10 +405,43 @@ class Simulator:
                 print(log_line)
                 self.debug_logs.append(log_line)
 
-        if self.timestep % 50 == 0:
+        if self.dynamic_rn and self.timestep % 50 == 0:
             evaluate_and_adjust_relay_nodes(self.relay_nodes, self.users)
 
+        # CR placement agent: Q-update with prev step, then choose + apply new placement
+        if self.cr_agent is not None:
+            current_state = self.cr_agent.get_state()
+            if (self.cr_agent.prev_state is not None
+                    and self.cr_agent.prev_action is not None
+                    and self.cr_agent.last_reward is not None):
+                self.cr_agent.update(
+                    self.cr_agent.prev_state,
+                    self.cr_agent.prev_action,
+                    self.cr_agent.last_reward,
+                    current_state,
+                )
+            action = self.cr_agent.select_action(current_state)
+            self.cr_agent.apply_action(action)
+            self.cr_agent.prev_state = current_state
+            self.cr_agent.prev_action = action
+
         self.metrics.log(self.timestep, self.users)
+
+        # CR agent reward: satisfaction rate computed from this step's metrics
+        if self.cr_agent is not None:
+            n = len(self.users)
+            n_sat = sum(1 for u in self.users if u.is_satisfied)
+            self.cr_agent.last_reward = n_sat / n if n > 0 else 0.0
+
+        for bs in self.base_stations:
+            if bs.has_compute_resource and bs.compute_resource is not None:
+                cr = bs.compute_resource
+                self.metrics.cr_utilization_log.append((
+                    self.timestep, bs.id,
+                    cr.capacity_mbps,
+                    round(cr.current_load_mbps, 2),
+                    round(cr.utilization, 4),
+                ))
 
     def finalize(self, output_dir="logs"):
         os.makedirs(output_dir, exist_ok=True)
@@ -315,6 +454,23 @@ class Simulator:
                 for i, (q, eps) in enumerate(zip(rn.q_history, rn.epsilon_history)):
                     writer.writerow([i, q, eps])
             rn.save_learning_logs(output_dir)
+
+        if self.cr_agent is not None and self.cr_agent.q_history:
+            cr_log = os.path.join(output_dir, "cr_learning.csv")
+            with open(cr_log, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Step", "Avg_Q", "Epsilon"])
+                for i, (q, eps) in enumerate(
+                    zip(self.cr_agent.q_history, self.cr_agent.epsilon_history)
+                ):
+                    writer.writerow([i + 1, round(q, 6), round(eps, 6)])
+
+            dq_log = os.path.join(output_dir, "cr_delta_q.csv")
+            with open(dq_log, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Step", "DeltaQ"])
+                for i, dq in enumerate(self.cr_agent.delta_q_history):
+                    writer.writerow([i + 1, round(dq, 10)])
 
         self.metrics.save_all(output_dir)
 

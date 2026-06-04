@@ -1,5 +1,5 @@
 import random
-from simulation.simulator import Simulator
+from simulation.simulator import Simulator, is_line_blocked, deployment_link_budget
 from agents.base_station import BaseStation
 from agents.base_station import ComputeRessources
 from agents.relay_node import RelayNode
@@ -31,12 +31,24 @@ def build_simulation(config=None):
         )
         sim.add_base_station(bs)
         if bs_cfg.get("has_compute_resource", False):
-            cr = ComputeRessources(i + 1, bs.position, 10, 0)
+            cr_capacity_mbps = bs_cfg.get("cr_capacity_mbps", 100.0)
+            cr = ComputeRessources(i + 1, bs.position, cr_capacity_mbps, 0)
             bs.has_compute_resource = True
             bs.compute_resource = cr
 
     for i, rn_cfg in enumerate(config["relay_nodes"]):
         sim.add_relay_node(RelayNode(i + 1, (rn_cfg["x"], rn_cfg["y"]), throughput=rn_cfg.get("throughput", 30)))
+
+    for rn in sim.relay_nodes:
+        best_bs, best_loss = min(
+            ((bs, deployment_link_budget(rn.position, bs.position, sim.obstacles))
+             for bs in sim.base_stations),
+            key=lambda t: t[1],
+        )
+        rn.parent = best_bs
+        rn.backhaul_los = not is_line_blocked(rn.position, best_bs.position, sim.obstacles)
+        print(f"[Init] RN{rn.id} -> BS{best_bs.id} | "
+              f"LoS={rn.backhaul_los} | path_loss={best_loss:.1f} dB")
 
     for obs_cfg in config["obstacles"]:
         sim.add_obstacle((obs_cfg["x"], obs_cfg["y"]), size=obs_cfg.get("size", "small"))
