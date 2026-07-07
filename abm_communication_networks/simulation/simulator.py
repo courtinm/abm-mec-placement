@@ -100,6 +100,7 @@ class MetricsLogger:
         self.satisfaction_users_log = []    # one row per user per step
         self.satisfaction_summary_log = []  # one row per step
         self.cr_utilization_log = []        # one row per step per BS with CR
+        self.cr_counterfactual_reward = 0.0  # users saved by CR / n_total
 
     def log(self, step, users):
         total_latency = []
@@ -111,6 +112,7 @@ class MetricsLogger:
         # Reset each step — connections change as users move
         self.hop_count_to_BS = {}
         self.hop_count_to_core_network = {}
+        n_helped = 0  # counterfactual: users saved by CR this step
 
         rows_before = len(self.hop_counts_log)
 
@@ -145,6 +147,11 @@ class MetricsLogger:
                     data_rate_mbps >= user.throughput_req_mbps
                     and radio_ms + compute_ms <= user.latency_threshold_ms
                 )
+                if target == "BS" and user.is_satisfied:
+                    sat_no_cr = (data_rate_mbps >= user.throughput_req_mbps
+                                 and radio_ms + _CORE_LATENCY_MS <= user.latency_threshold_ms)
+                    if not sat_no_cr:
+                        n_helped += 1
             elif isinstance(user.connected_to, RelayNode):
                 path = get_path_to_bs(user.connected_to)
                 if path is None:
@@ -184,6 +191,12 @@ class MetricsLogger:
                         and radio_ms + backhaul_ms + compute_ms <= user.latency_threshold_ms
                         and backhaul_los
                     )
+                    if target == "BS" and user.is_satisfied:
+                        sat_no_cr = (data_rate_mbps >= user.throughput_req_mbps
+                                     and radio_ms + backhaul_ms + _CORE_LATENCY_MS <= user.latency_threshold_ms
+                                     and backhaul_los)
+                        if not sat_no_cr:
+                            n_helped += 1
             else:
                 target = "Disconnected"
                 data_rate_mbps = 0.0
@@ -215,6 +228,8 @@ class MetricsLogger:
                 handoffs += 1
 
             self.prev_connections[user.id] = user.connected_to
+
+        self.cr_counterfactual_reward = n_helped / len(users) if users else 0.0
 
         assert len(self.hop_counts_log) - rows_before == len(users), (
             f"Step {step}: expected {len(users)} hop rows, got {len(self.hop_counts_log) - rows_before}"
@@ -308,6 +323,7 @@ class Simulator:
         self.metrics = MetricsLogger()
         self.cr_agent = None      # set externally to enable dynamic CR placement
         self.dynamic_rn = True    # set to False in headless runs to disable auto add/remove RNs
+        self.user_move_range = 5  # max |dx|,|dy| per step; set from config["user_mobility"] in build_simulation
 
     def add_base_station(self, bs):
         self.base_stations.append(bs)
@@ -326,7 +342,8 @@ class Simulator:
         self.debug_logs.clear()
 
         for user in self.users:
-            dx, dy = random.randint(-5, 5), random.randint(-5, 5)
+            r = self.user_move_range
+            dx, dy = random.randint(-r, r), random.randint(-r, r)
             user.move((dx, dy))
 
         for bs in self.base_stations:
@@ -341,10 +358,15 @@ class Simulator:
             rn.step(self.users)
 
         for rn in self.relay_nodes:
-            if rn.parent is not None:
-                rn.backhaul_los = not is_line_blocked(
-                    rn.position, rn.parent.position, self.obstacles
-                )
+            best_bs, _ = min(
+                ((bs, deployment_link_budget(rn.position, bs.position, self.obstacles))
+                 for bs in self.base_stations),
+                key=lambda t: t[1],
+            )
+            rn.parent = best_bs
+            rn.backhaul_los = not is_line_blocked(
+                rn.position, rn.parent.position, self.obstacles
+            )
 
         for user in self.users:
             user.has_los = False
@@ -400,7 +422,7 @@ class Simulator:
             if not connected:
                 user.connected_to = None
                 user.disconnections += 1
-                reasons = [reason for node, reason in blocked_nodes] or ["No suitable nodes nearby"]
+                reasons = [reason for _, reason in blocked_nodes] or ["No suitable nodes nearby"]
                 log_line = f"[User {user.id}] No connection. Reasons: {reasons}"
                 print(log_line)
                 self.debug_logs.append(log_line)
@@ -427,11 +449,15 @@ class Simulator:
 
         self.metrics.log(self.timestep, self.users)
 
-        # CR agent reward: satisfaction rate computed from this step's metrics
+        # CR agent reward: counterfactual (users saved by CR) + optional shaping
         if self.cr_agent is not None:
             n = len(self.users)
             n_sat = sum(1 for u in self.users if u.is_satisfied)
-            self.cr_agent.last_reward = n_sat / n if n > 0 else 0.0
+            self.cr_agent.last_reward_global = n_sat / n if n > 0 else 0.0
+            if hasattr(self.cr_agent, 'compute_and_set_reward'):
+                self.cr_agent.compute_and_set_reward(self.metrics.cr_counterfactual_reward)
+            else:
+                self.cr_agent.last_reward = self.metrics.cr_counterfactual_reward
 
         for bs in self.base_stations:
             if bs.has_compute_resource and bs.compute_resource is not None:

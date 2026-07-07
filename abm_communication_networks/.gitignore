@@ -1,7 +1,12 @@
 # Generated experiment outputs — regenerate with run_experiment.py
 logs/
+logs_test_urban/
 models/
 metrics/
+resultats/
+baseline_comparison/
+sim_log.csv
+network_visualization_step_5.png
 
 # Generated plots — regenerate with plots/plot_results.py
 plots/*.png

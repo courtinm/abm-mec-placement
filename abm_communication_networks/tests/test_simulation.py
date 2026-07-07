@@ -29,7 +29,7 @@ def test_simulation_runs(tmp_path):
 
 
 def test_seeding_is_deterministic(tmp_path):
-    from configs.rural import CONFIG
+    from configs.urban_light import CONFIG
 
     dir_a = tmp_path / "run_a"
     dir_b = tmp_path / "run_b"

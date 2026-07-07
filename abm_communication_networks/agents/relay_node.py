@@ -65,10 +65,7 @@ class RelayNode:
         self.last_action = 0
         self.last_reward = 0.0
         self.id_BS = None
-        # Parent is assigned once at simulation startup and does NOT change
-        # when the RN moves via Q-learning (deliberate simplification —
-        # dynamic re-parenting is deferred as future work).
-        self.parent = None       # BaseStation or RelayNode, assigned at init
+        self.parent = None       # BaseStation, reassigned each step after the RN moves
         self.backhaul_los = False  # updated each step in simulator
 
         # Learning logs
@@ -107,8 +104,7 @@ class RelayNode:
         return (x_bin, y_bin, nearby)
 
     def update_q_value(self, users, prev_state):
-        connected_users = sum(1 for u in users if u.connected_to == self)
-        reward = connected_users  # Encourages useful positions
+        reward = sum(1 for u in users if u.connected_to == self and u.is_satisfied)
         self.last_reward = reward
         next_state = self.get_state(users)
         self.agent.update(prev_state, self.last_action, reward, next_state, len(self.possible_positions))

@@ -7,11 +7,14 @@ import random
 from main import build_simulation
 from agents.placement_strategies import STRATEGY_NAMES, make_strategy
 
-SCENARIOS = ("urban", "suburban", "rural", "default")
+SCENARIOS = ("urban_light", "urban_medium", "urban_dense", "urban", "default")
+
+_ALIASES = {"urban": "urban_medium"}
 
 
 def load_config(scenario):
-    module = importlib.import_module(f"configs.{scenario}")
+    actual = _ALIASES.get(scenario, scenario)
+    module = importlib.import_module(f"configs.{actual}")
     return module.CONFIG
 
 
@@ -28,12 +31,21 @@ def _attach_cr_agent(sim, config, qtable_path=None, freeze=False):
     cr_cfg = config.get("cr_placement", {})
     k = cr_cfg.get("k", 2)
     cr_capacity = cr_cfg.get("cr_capacity_mbps", 100.0)
+    hp = cr_cfg.get("rl_hyperparams", {})
 
     for bs in sim.base_stations:
         bs.has_compute_resource = False
         bs.compute_resource = None
 
-    agent = CRPlacementAgent(sim.base_stations, k, cr_capacity)
+    agent = CRPlacementAgent(
+        sim.base_stations, k, cr_capacity,
+        epsilon=hp.get("epsilon_0", 0.5),
+        epsilon_min=hp.get("epsilon_min", 0.05),
+        epsilon_decay=hp.get("epsilon_decay", 0.995),
+        alpha_min=hp.get("alpha_min", 0.01),
+        alpha_decay=hp.get("alpha_decay", 0.998),
+        reward_shaping_lambda=hp.get("reward_shaping_lambda", 0.0),
+    )
     agent._users = sim.users
     agent._relay_nodes = sim.relay_nodes
 
@@ -70,7 +82,7 @@ def _attach_strategy(sim, config, name):
 
 def main():
     parser = argparse.ArgumentParser(description="Run headless simulation (no pygame)")
-    parser.add_argument("--scenario", choices=SCENARIOS, default="urban")
+    parser.add_argument("--scenario", choices=SCENARIOS, default="urban_medium")
     parser.add_argument("--steps", type=int, default=100)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--seed", type=int, default=0)
@@ -80,10 +92,10 @@ def main():
              "eval: measure (use with --strategy OR --cr-qtable)",
     )
     parser.add_argument(
-        "--strategy", choices=STRATEGY_NAMES, default=None, metavar="STRATEGY",
+        "--strategy", choices=STRATEGY_NAMES + ["rl"], default=None, metavar="STRATEGY",
         help=f"Baseline CR placement strategy for --mode eval. "
-             f"Choices: {STRATEGY_NAMES}. "
-             "When set, --cr-qtable is not required.",
+             f"Choices: {STRATEGY_NAMES} (baseline) or 'rl' (trained agent). "
+             "Use 'rl' with --cr-qtable to evaluate the trained RL agent.",
     )
     parser.add_argument(
         "--rn-qtable", default=None, metavar="PATH",
@@ -102,13 +114,14 @@ def main():
     args = parser.parse_args()
 
     # ── Argument validation ───────────────────────────────────────────
-    if args.strategy is not None and args.mode != "eval":
+    _is_baseline = args.strategy is not None and args.strategy != "rl"
+    if args.strategy is not None and args.strategy != "rl" and args.mode != "eval":
         parser.error("--strategy is only valid with --mode eval")
 
-    if args.strategy is None:
-        # RL path: Q-tables required
-        if args.mode in ("train_cr", "eval") and args.rn_qtable is None:
-            parser.error(f"--rn-qtable is required for mode '{args.mode}' "
+    if not _is_baseline:
+        # RL path: cr-qtable required for eval
+        if args.mode == "eval" and args.rn_qtable is None and args.strategy != "rl":
+            parser.error("--rn-qtable is required for mode 'eval' "
                          "(or use --strategy for a baseline run)")
         if args.mode == "eval" and args.cr_qtable is None:
             parser.error("--cr-qtable is required for mode 'eval' "
@@ -144,7 +157,7 @@ def main():
     sim.dynamic_rn = False
 
     # ── Agent / strategy setup ────────────────────────────────────────
-    if args.strategy is not None:
+    if _is_baseline:
         # Baseline eval: no Q-tables required
         if args.rn_qtable is not None:
             # Optionally freeze RN with a pre-trained Q-table
@@ -162,11 +175,16 @@ def main():
               f"{len(sim.base_stations)} BS)")
 
     elif args.mode in ("train_cr", "eval"):
-        for rn in sim.relay_nodes:
-            rn.agent.load_qtable(_rn_path(args.rn_qtable, rn.id))
-            rn.agent.frozen = True
-            rn.agent.epsilon = 0.0
-        print(f"[{args.mode}] RN Q-tables loaded and frozen.")
+        if args.rn_qtable is not None:
+            for rn in sim.relay_nodes:
+                path = _rn_path(args.rn_qtable, rn.id)
+                if os.path.exists(path):
+                    rn.agent.load_qtable(path)
+                    rn.agent.frozen = True
+                    rn.agent.epsilon = 0.0
+            print(f"[{args.mode}] RN Q-tables loaded and frozen.")
+        else:
+            print(f"[{args.mode}] No --rn-qtable provided — RNs use default policy.")
 
         freeze_cr = (args.mode == "eval")
         _attach_cr_agent(sim, config,
@@ -177,7 +195,10 @@ def main():
 
     # ── Simulation loop ───────────────────────────────────────────────
     rn_reward_rows = []
-    cr_reward_rows = []
+    cr_reward_rows = []              # shaped reward (counterfactual + shaping)
+    cr_reward_cf_rows = []           # counterfactual only
+    cr_reward_shaping_rows = []      # lambda * r_latency only
+    cr_reward_global_rows = []       # global satisfaction (for comparison)
 
     for _ in range(args.steps):
         sim.simulate_step()
@@ -187,11 +208,23 @@ def main():
             total_rn_reward = sum(rn.last_reward for rn in sim.relay_nodes)
             rn_reward_rows.append((step, total_rn_reward))
 
-        if (args.mode in ("train_cr", "eval") or args.strategy is not None) \
+        if (args.mode in ("train_cr", "eval") or _is_baseline) \
                 and step > args.warmup \
                 and sim.cr_agent is not None \
                 and sim.cr_agent.last_reward is not None:
             cr_reward_rows.append((step, round(sim.cr_agent.last_reward, 4)))
+            if getattr(sim.cr_agent, "last_reward_counterfactual", None) is not None:
+                cr_reward_cf_rows.append(
+                    (step, round(sim.cr_agent.last_reward_counterfactual, 4))
+                )
+            if getattr(sim.cr_agent, "last_reward_shaping", None) is not None:
+                cr_reward_shaping_rows.append(
+                    (step, round(sim.cr_agent.last_reward_shaping, 4))
+                )
+            if getattr(sim.cr_agent, "last_reward_global", None) is not None:
+                cr_reward_global_rows.append(
+                    (step, round(sim.cr_agent.last_reward_global, 4))
+                )
 
     sim.finalize(output_dir=output_dir)
 
@@ -219,7 +252,30 @@ def main():
             writer = csv.writer(f)
             writer.writerow(["Step", "SatisfactionRate"])
             writer.writerows(cr_reward_rows)
-        print(f"CR reward log -> '{reward_path}'.")
+        print(f"CR reward log (shaped)         -> '{reward_path}'.")
+
+        if cr_reward_cf_rows:
+            cf_path = os.path.join(output_dir, "cr_reward_counterfactual_only.csv")
+            with open(cf_path, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Step", "SatisfactionRate"])
+                writer.writerows(cr_reward_cf_rows)
+            print(f"CR reward log (counterfact.)   -> '{cf_path}'.")
+
+        if cr_reward_shaping_rows:
+            sh_path = os.path.join(output_dir, "cr_reward_shaping_term.csv")
+            with open(sh_path, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Step", "ShapingTerm"])
+                writer.writerows(cr_reward_shaping_rows)
+            print(f"CR reward log (shaping term)   -> '{sh_path}'.")
+
+        global_path = os.path.join(output_dir, "cr_reward_global.csv")
+        with open(global_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Step", "SatisfactionRate"])
+            writer.writerows(cr_reward_global_rows)
+        print(f"CR reward log (global)         -> '{global_path}'.")
 
     print(f"Done. {args.steps} steps | scenario={args.scenario} | "
           f"mode={args.mode} | strategy={args.strategy or 'RL'} | seed={args.seed}. "

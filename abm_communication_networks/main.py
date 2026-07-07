@@ -21,6 +21,8 @@ def build_simulation(config=None):
         config = CONFIG
 
     sim = Simulator(grid_size=config.get("grid_size", 100))
+    mobility_move_range = {"low": 2, "high": 5}
+    sim.user_move_range = mobility_move_range.get(config.get("user_mobility", "high"), 5)
 
     for i, bs_cfg in enumerate(config["base_stations"]):
         bs = BaseStation(

@@ -18,7 +18,7 @@ Expected directory layout
           {seed_or_scenario}/  any subdirectory structure
             satisfaction_summary.csv
         trained/
-          {scenario}/          urban | suburban | rural
+          {scenario}/          urban_light | urban_medium | urban_dense
             {seed}/
               satisfaction_summary.csv
 
@@ -72,9 +72,14 @@ STRATEGY_LABELS = {
     "centralized": "Centralized",
 }
 SCENARIO_COLORS = {
-    "urban":    "#3498db",
-    "suburban": "#e67e22",
-    "rural":    "#2ecc71",
+    "urban_light":  "#2ecc71",
+    "urban_medium": "#3498db",
+    "urban_dense":  "#e67e22",
+}
+SCENARIO_LABELS = {
+    "urban_light":  "Urban-Light",
+    "urban_medium": "Urban-Medium",
+    "urban_dense":  "Urban-Dense",
 }
 APP_LABELS = {
     "Rate_AR_VR":       "AR/VR",
@@ -311,7 +316,7 @@ def fig4_per_app_satisfaction(
     logs_dir: str, output_dir: str, warmup: int
 ) -> None:
     trained_dir = os.path.join(logs_dir, "eval", "trained")
-    scenarios = ["urban", "suburban", "rural"]
+    scenarios = ["urban_light", "urban_medium", "urban_dense"]
     app_cols = list(APP_LABELS.keys())
 
     scenario_data: dict[str, dict] = {}
@@ -345,7 +350,7 @@ def fig4_per_app_satisfaction(
         ax.bar(
             offsets, m, yerr=ci, width=bar_w * 0.88,
             color=SCENARIO_COLORS[sc], alpha=0.85, edgecolor="white",
-            linewidth=1, capsize=5, label=sc.capitalize(),
+            linewidth=1, capsize=5, label=SCENARIO_LABELS.get(sc, sc),
             error_kw={"elinewidth": 1.5, "ecolor": "#333333"},
         )
 

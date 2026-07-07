@@ -127,10 +127,11 @@ def _score(users, candidate_bs, chosen_set, cr_capacity_mbps):
 
 class _BaseStrategy:
     """Interface compatible with CRPlacementAgent for simulator.py."""
-    prev_state      = None
-    prev_action     = None
-    last_reward     = None
-    frozen          = True
+    prev_state         = None
+    prev_action        = None
+    last_reward        = None
+    last_reward_global = None
+    frozen             = True
     # Empty histories so finalize() works without special-casing strategies
     q_history       = []
     epsilon_history = []

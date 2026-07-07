@@ -14,7 +14,7 @@ CONFIG = {
         {"x": 60, "y": 60, "throughput": 30},
     ],
     "cr_placement": {
-        "k": 2,              # number of CRs to place dynamically
+        "k": 2,
         "cr_capacity_mbps": 100.0,
     },
     "obstacles": [

@@ -12,12 +12,22 @@ CONFIG = {
         {"x": 40, "y": 40, "throughput": 30},
     ],
     "cr_placement": {
-        "k": 2,              # 2 CRs among 3 BS
+        "k": 2,
         "cr_capacity_mbps": 100.0,
+        "rl_hyperparams": {
+            "epsilon_0":              0.8,
+            "epsilon_min":            0.05,
+            "epsilon_decay":          0.999,
+            "alpha_0":                0.1,
+            "alpha_min":              0.01,
+            "alpha_decay":            0.999,
+            "reward_shaping_lambda":  0.1,
+        },
     },
     "obstacles": [
         {"x": 35, "y": 35, "size": "small"},
         {"x": 60, "y": 40, "size": "large"},
         {"x": 40, "y": 60, "size": "small"},
+        {"x": 65, "y": 65, "size": "small"},
     ],
 }
