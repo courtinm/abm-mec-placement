@@ -57,6 +57,18 @@ TRAIN_CR_STEPS = {
 EVAL_STEPS     = 300
 WARMUP         = 50
 MA_WINDOW      = 30   # fenêtre de moyenne mobile pour les graphes
+
+# 2x2 factorial design (dissertation Ch.7, M0-M3). M0 = both at their
+# simulator defaults ("fcfs", "equal_share") -> label None, meaning the
+# ORIGINAL resultats/resultats-{scenario}/ path is used unchanged, so M0's
+# already-trained models/results are never touched by this factorial support
+# unless explicitly targeted (see --skip-train guard in main()).
+CONDITION_LABELS = {
+    ("fcfs",     "equal_share"):  None,   # M0 — do not retrain (existing results)
+    ("priority", "equal_share"):  "M1",
+    ("fcfs",     "proportional"): "M2",
+    ("priority", "proportional"): "M3",
+}
 DPI            = 300
 
 STRATEGY_COLORS = {
@@ -162,13 +174,16 @@ def _write_csv(path, header, rows):
 
 # ── Phases d'expérimentation ───────────────────────────────────────────────────
 
-def run_train_rn(scenario, steps, models_dir, logs_dir):
+def run_train_rn(scenario, steps, models_dir, logs_dir,
+                  cr_admission_policy="fcfs", radio_allocation="equal_share"):
     """Phase 1 — entraînement de l'agent RN (positionnement)."""
     print(f"\n  [train_rn] {scenario}  ({steps} steps)", flush=True)
     _seed_all(42)
     config = _load_config(scenario)
     sim = build_simulation(config)
     sim.dynamic_rn = False
+    sim.cr_admission_policy = cr_admission_policy  # 2x2 factorial, Ch.7 M0-M3
+    sim.radio_allocation    = radio_allocation
 
     if not sim.relay_nodes:
         print("    -> Pas de RN dans ce scénario, phase ignorée.")
@@ -194,13 +209,16 @@ def run_train_rn(scenario, steps, models_dir, logs_dir):
           f"derniers 20% = {np.mean(last20):.2f}  {trend}")
 
 
-def run_train_cr(scenario, steps, models_dir, logs_dir, warmup):
+def run_train_cr(scenario, steps, models_dir, logs_dir, warmup,
+                  cr_admission_policy="fcfs", radio_allocation="equal_share"):
     """Phase 2 — entraînement de l'agent CR (RN gelés)."""
     print(f"\n  [train_cr] {scenario}  ({steps} steps)", flush=True)
     _seed_all(42)
     config = _load_config(scenario)
     sim = build_simulation(config)
     sim.dynamic_rn = False
+    sim.cr_admission_policy = cr_admission_policy  # 2x2 factorial, Ch.7 M0-M3
+    sim.radio_allocation    = radio_allocation
 
     for rn in sim.relay_nodes:
         path = _rn_model_path(models_dir, rn.id)
@@ -261,7 +279,8 @@ def run_train_cr(scenario, steps, models_dir, logs_dir, warmup):
               f"derniers 20% = {np.mean(last20):.3f}  {trend}")
 
 
-def run_eval_trained(scenario, steps, seed, models_dir, logs_dir):
+def run_eval_trained(scenario, steps, seed, models_dir, logs_dir,
+                      cr_admission_policy="fcfs", radio_allocation="equal_share"):
     """Phase 3 — évaluation de l'agent RL (RN + CR gelés)."""
     out_dir = os.path.join(logs_dir, "eval", "trained", f"s{seed}")
     os.makedirs(out_dir, exist_ok=True)
@@ -269,6 +288,8 @@ def run_eval_trained(scenario, steps, seed, models_dir, logs_dir):
     config = _load_config(scenario)
     sim = build_simulation(config)
     sim.dynamic_rn = False
+    sim.cr_admission_policy = cr_admission_policy  # 2x2 factorial, Ch.7 M0-M3
+    sim.radio_allocation    = radio_allocation
 
     for rn in sim.relay_nodes:
         path = _rn_model_path(models_dir, rn.id)
@@ -301,7 +322,8 @@ def run_eval_trained(scenario, steps, seed, models_dir, logs_dir):
     sim.finalize(output_dir=out_dir)
 
 
-def run_eval_strategy(scenario, strategy_name, steps, seed, models_dir, logs_dir):
+def run_eval_strategy(scenario, strategy_name, steps, seed, models_dir, logs_dir,
+                       cr_admission_policy="fcfs", radio_allocation="equal_share"):
     """Phase 4 — évaluation d'une stratégie baseline (RN gelés, pas de Q-learning CR)."""
     out_dir = os.path.join(logs_dir, "eval", strategy_name, f"s{seed}")
     os.makedirs(out_dir, exist_ok=True)
@@ -309,6 +331,8 @@ def run_eval_strategy(scenario, strategy_name, steps, seed, models_dir, logs_dir
     config = _load_config(scenario)
     sim = build_simulation(config)
     sim.dynamic_rn = False
+    sim.cr_admission_policy = cr_admission_policy  # 2x2 factorial, Ch.7 M0-M3
+    sim.radio_allocation    = radio_allocation
 
     for rn in sim.relay_nodes:
         path = _rn_model_path(models_dir, rn.id)
@@ -617,11 +641,30 @@ def main():
         "--skip-eval", action="store_true",
         help="Sauter l'évaluation (regénérer les graphiques uniquement)"
     )
+    parser.add_argument(
+        "--cr-admission-policy", choices=("fcfs", "priority"), default="fcfs",
+        help="2x2 factorial (Ch.7 M0-M3). Défaut 'fcfs' = M0."
+    )
+    parser.add_argument(
+        "--radio-allocation", choices=("equal_share", "proportional"), default="equal_share",
+        help="2x2 factorial (Ch.7 M0-M3). Défaut 'equal_share' = M0."
+    )
     args = parser.parse_args()
 
     seeds = list(range(args.seeds))
+    condition = CONDITION_LABELS[(args.cr_admission_policy, args.radio_allocation)]
+
+    if condition is None and not args.skip_train:
+        parser.error(
+            "cr-admission-policy=fcfs + radio-allocation=equal_share is M0, whose "
+            "Q-tables/results already exist and must not be retrained. Pass "
+            "--skip-train if you only want to regenerate M0's plots, or pick a "
+            "different --cr-admission-policy/--radio-allocation combination (M1/M2/M3)."
+        )
 
     print("=" * 62)
+    print(f"  Condition    : {condition or 'M0 (baseline)'}  "
+          f"(cr_admission_policy={args.cr_admission_policy}, radio_allocation={args.radio_allocation})")
     print(f"  Scénarios    : {args.scenarios}")
     print(f"  Steps RN     : {args.steps_train}")
     print(f"  Steps CR     : {TRAIN_CR_STEPS}")
@@ -632,24 +675,31 @@ def main():
     print("=" * 62)
 
     for scenario in args.scenarios:
-        print(f"\n{'='*62}\n  SCENARIO : {scenario.upper()}\n{'='*62}")
+        print(f"\n{'='*62}\n  SCENARIO : {scenario.upper()}"
+              f"{'  [' + condition + ']' if condition else ''}\n{'='*62}")
 
-        base_dir   = os.path.join("resultats", f"resultats-{scenario}")
+        # M0 keeps the original path untouched; M1/M2/M3 get their own
+        # distinct, never-colliding directory (see CONDITION_LABELS).
+        dir_name   = f"resultats-{scenario}" + (f"__{condition}" if condition else "")
+        base_dir   = os.path.join("resultats", dir_name)
         logs_dir   = os.path.join(base_dir, "logs")
         models_dir = os.path.join(base_dir, "models")
 
         # ── Entraînement ──────────────────────────────────────────────
         if not args.skip_train:
-            run_train_rn(scenario, args.steps_train, models_dir, logs_dir)
+            run_train_rn(scenario, args.steps_train, models_dir, logs_dir,
+                        args.cr_admission_policy, args.radio_allocation)
             cr_steps = TRAIN_CR_STEPS.get(scenario, 2000)
-            run_train_cr(scenario, cr_steps, models_dir, logs_dir, WARMUP)
+            run_train_cr(scenario, cr_steps, models_dir, logs_dir, WARMUP,
+                        args.cr_admission_policy, args.radio_allocation)
 
         # ── Évaluation ────────────────────────────────────────────────
         if not args.skip_eval:
             print(f"\n  [eval] {scenario} — agent RL entraîné")
             for seed in seeds:
                 print(f"    seed {seed} ...", end=" ", flush=True)
-                run_eval_trained(scenario, args.steps_eval, seed, models_dir, logs_dir)
+                run_eval_trained(scenario, args.steps_eval, seed, models_dir, logs_dir,
+                                 args.cr_admission_policy, args.radio_allocation)
                 print("ok")
 
             for strat in STRATEGIES:
@@ -657,7 +707,8 @@ def main():
                 for seed in seeds:
                     print(f"    seed {seed} ...", end=" ", flush=True)
                     run_eval_strategy(scenario, strat, args.steps_eval, seed,
-                                      models_dir, logs_dir)
+                                      models_dir, logs_dir,
+                                      args.cr_admission_policy, args.radio_allocation)
                     print("ok")
 
         # ── Graphiques ────────────────────────────────────────────────

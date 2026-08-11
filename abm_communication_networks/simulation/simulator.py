@@ -19,6 +19,29 @@ _RADIO_LATENCY_SCALE = 0.1   # ms per grid unit
 _CORE_LATENCY_MS    = 50.0   # ms added when compute hits the core network
 _HOP_LATENCY_MS     = 2.0    # ms per extra relay hop
 
+# CR admission priority, used only to order the loop in MetricsLogger.log()
+# below. Replaces the earlier FCFS (list-order) admission policy: under FCFS,
+# CR capacity was granted to whichever user happened to appear first in
+# `users` (initialisation order), which could let a best-effort user occupy
+# CR capacity while a concurrently saturated AR/VR user overflowed to the
+# core despite its stricter latency threshold — a limitation documented in
+# Section 5.3.1 of the dissertation. Latency-critical AR/VR users are now
+# admitted first, then streaming, then best-effort; ties within a class are
+# broken by user.id so admission order stays deterministic under a fixed
+# seed. This changes only iteration order — cr.can_serve / cr.add_user and
+# all other admission logic are unchanged.
+_APP_PRIORITY = {"AR_VR": 0, "streaming": 1, "best_effort": 2}
+
+
+def _admission_order(users, policy="priority"):
+    # "fcfs" reproduces the pre-fix list-order behaviour and exists solely so
+    # that the before/after comparison experiment (dissertation Ch.7) can
+    # reproduce the old policy without duplicating the simulator; every
+    # normal caller uses the "priority" default and is unaffected.
+    if policy == "fcfs":
+        return list(users)
+    return sorted(users, key=lambda u: (_APP_PRIORITY.get(u.app_type, len(_APP_PRIORITY)), u.id))
+
 def is_line_blocked(src, dst, obstacles, allow_through_large=False):
     x1, y1 = src
     x2, y2 = dst
@@ -70,6 +93,38 @@ def get_path_to_bs(node):
     return path
 
 
+def _proportional_rate(capacity_mbps, user_req_mbps, node_demand_mbps):
+    """Radio data rate for one user at a node with total capacity
+    *capacity_mbps*, given the node's total requested demand
+    *node_demand_mbps* (sum of throughput_req_mbps over all users currently
+    connected to it). Fully served (= its own request) while aggregate
+    demand fits under capacity; otherwise shared out proportionally to each
+    user's own request rather than split equally per head. Replaces the
+    earlier equal-share model (capacity / connected_count), which ignored
+    how much each user actually needed.
+    """
+    if node_demand_mbps <= capacity_mbps:
+        return user_req_mbps
+    return capacity_mbps * (user_req_mbps / node_demand_mbps)
+
+
+def _serving_bs_id(user):
+    """The id of the base station a user is currently anchored to, whether
+    directly connected or reached via a relay-node backhaul chain. None if
+    disconnected or the parent chain is broken. Used only by the migration
+    cost overlay in MetricsLogger.log() below.
+    """
+    conn = user.connected_to
+    if conn is None:
+        return None
+    if isinstance(conn, BaseStation):
+        return conn.id
+    if isinstance(conn, RelayNode):
+        path = get_path_to_bs(conn)
+        return path[-1].id if path is not None else None
+    return None
+
+
 def deployment_link_budget(src_pos, dst_pos, obstacles, frequency_GHz=28, nlos_penalty_dB=30.0):
     """Deterministic path loss for deployment-time decisions (no shadow fading).
     Adds nlos_penalty_dB if the link is blocked — 3GPP TR 38.901 typical value.
@@ -87,6 +142,12 @@ def deployment_link_budget(src_pos, dst_pos, obstacles, frequency_GHz=28, nlos_p
 
 class MetricsLogger:
     def __init__(self):
+        # Both default to the original (M0) behaviour: FCFS admission order
+        # and equal-share radio rate. Existing M0 Q-tables/results were
+        # trained/produced under exactly these two defaults and must stay
+        # reproducible without passing any flag — see Simulator.__init__.
+        self.admission_policy = "fcfs"        # "fcfs" (M0) | "priority" (M1/M3)
+        self.radio_allocation = "equal_share"  # "equal_share" (M0) | "proportional" (M2/M3)
         self.latency_avg = []
         self.latency_max = []
         self.failed_connections = []
@@ -102,6 +163,16 @@ class MetricsLogger:
         self.cr_utilization_log = []        # one row per step per BS with CR
         self.cr_counterfactual_reward = 0.0  # users saved by CR / n_total
 
+        # Migration-cost overlay (eval only — see Simulator.migration_cost_mode
+        # and the "Migration cost overlay" block in log() below). Set by
+        # Simulator.simulate_step() before calling log(); default is a no-op
+        # so behaviour is byte-identical to before this feature when unset
+        # (always the case during train_rn/train_cr).
+        self.migration_cost_mode = None            # None | "hard_cutover" | "make_before_break"
+        self.migration_lost_bs_ids = set()          # BS ids that just lost their CR this step
+        self.migration_lost_capacity_mbps = 0.0     # sum of capacity_mbps of those BS's (old) CRs
+        self.migration_overhead_log = []            # one row per step: (step, migration_overhead_mbps)
+
     def log(self, step, users):
         total_latency = []
         failures = 0
@@ -116,15 +187,43 @@ class MetricsLogger:
 
         rows_before = len(self.hop_counts_log)
 
-        for user in users:
+        # Total requested demand per node (BS or RN), used below for
+        # proportional radio-rate sharing (_proportional_rate). One pass
+        # over *users* regardless of admission order, since a node's total
+        # demand does not depend on which of its users gets processed first.
+        demand_by_node = {}
+        for u in users:
+            node = u.connected_to
+            if node is not None:
+                demand_by_node[node] = demand_by_node.get(node, 0.0) + u.throughput_req_mbps
+
+        # Rows are staged here rather than appended straight to
+        # satisfaction_users_log, because the migration-cost overlay below
+        # (applied after this loop) may still flip user.is_satisfied for
+        # "hard_cutover" and needs to contribute two extra columns; each row
+        # reads user.is_satisfied fresh when committed after the overlay, so
+        # every row reflects the final, post-overlay value exactly once.
+        pending_rows = []
+
+        # Priority-ordered admission (see _admission_order docstring above):
+        # only the iteration order changes here, not the admission logic
+        # itself (cr.can_serve / cr.add_user, below, are untouched). Rows
+        # logged per user still cover every user exactly once, just in
+        # priority order rather than list order — CSV row order changes,
+        # per-user content does not.
+        for user in _admission_order(users, self.admission_policy):
             connected = user.connected_to is not None
 
             # Count hops to compute resource and compute satisfaction
             if isinstance(user.connected_to, BaseStation):
                 node = user.connected_to
                 total_mbps = _BS_THROUGHPUT_MBPS.get(node.bs_type, 200.0)
-                # data_rate in Mbps: node capacity shared equally among connected users
-                data_rate_mbps = total_mbps / max(1, node.current_load)
+                if self.radio_allocation == "proportional":
+                    data_rate_mbps = _proportional_rate(
+                        total_mbps, user.throughput_req_mbps, demand_by_node.get(node, 0.0)
+                    )
+                else:  # "equal_share" (M0 default) — node capacity split equally per connected user
+                    data_rate_mbps = total_mbps / max(1, node.current_load)
                 if node.has_compute_resource and node.compute_resource is not None:
                     cr = node.compute_resource
                     cr.demanded_load_mbps += user.throughput_req_mbps
@@ -165,8 +264,12 @@ class MetricsLogger:
                     bs = path[-1]
                     hop_count = len(path)
                     rn = user.connected_to
-                    # data_rate in Mbps: RN throughput shared equally among its connected users
-                    data_rate_mbps = rn.throughput / max(1, rn.current_load)
+                    if self.radio_allocation == "proportional":
+                        data_rate_mbps = _proportional_rate(
+                            rn.throughput, user.throughput_req_mbps, demand_by_node.get(rn, 0.0)
+                        )
+                    else:  # "equal_share" (M0 default) — RN throughput split equally per connected user
+                        data_rate_mbps = rn.throughput / max(1, rn.current_load)
                     # backhaul_los is False if any RN in the path has a NLoS link to its parent
                     backhaul_los = all(getattr(n, 'backhaul_los', True) for n in path[:-1])
                     if bs.has_compute_resource and bs.compute_resource is not None:
@@ -203,10 +306,7 @@ class MetricsLogger:
                 user.is_satisfied = False
                 self.hop_counts_log.append((step, user.id, "Disconnected", "", ""))
 
-            self.satisfaction_users_log.append((
-                step, user.id, user.app_type, user.throughput_req_mbps,
-                round(data_rate_mbps, 2), target, user.is_satisfied,
-            ))
+            pending_rows.append((user, target, data_rate_mbps))
 
             if connected:
                 dist = math.dist(user.position, user.connected_to.position)
@@ -234,6 +334,52 @@ class MetricsLogger:
         assert len(self.hop_counts_log) - rows_before == len(users), (
             f"Step {step}: expected {len(users)} hop rows, got {len(self.hop_counts_log) - rows_before}"
         )
+
+        # ── Migration cost overlay (dissertation Ch.7, eval only) ──────────
+        # Applied last, after every latency/throughput/satisfaction value
+        # above has already been computed with the existing, untouched logic
+        # — cr.demanded_load_mbps and cr_counterfactual_reward (just set,
+        # above) are never touched by this block. Two modes, both gated on
+        # migration_lost_bs_ids (BS that just lost their CR this step,
+        # populated by Simulator.simulate_step() only when migration_cost_mode
+        # is not None):
+        #   "hard_cutover"      — forces is_satisfied=False for every user
+        #                         currently anchored (directly or via RN) to
+        #                         one of those BS, independent of the normal
+        #                         latency/throughput result.
+        #   "make_before_break" — does NOT touch is_satisfied (so no user is
+        #                         ever forced unsatisfied by this transition);
+        #                         it only records migration_overhead_mbps, the
+        #                         capacity of the CR(s) that would need to
+        #                         stay active one extra step to make the
+        #                         transition seamless — informational only,
+        #                         for a future RQ2 cost discussion, not wired
+        #                         into satisfaction or reward at all.
+        migration_overhead_mbps = 0.0
+        if self.migration_cost_mode == "hard_cutover" and self.migration_lost_bs_ids:
+            for user in users:
+                if _serving_bs_id(user) in self.migration_lost_bs_ids:
+                    user.is_satisfied = False
+                    user._migration_penalty_applied = True
+        elif self.migration_cost_mode == "make_before_break" and self.migration_lost_bs_ids:
+            migration_overhead_mbps = self.migration_lost_capacity_mbps
+            for user in users:
+                if _serving_bs_id(user) in self.migration_lost_bs_ids:
+                    user._migration_overhead_active = True
+
+        self.migration_overhead_log.append((step, round(migration_overhead_mbps, 2)))
+
+        for user, target, data_rate_mbps in pending_rows:
+            self.satisfaction_users_log.append((
+                step, user.id, user.app_type, user.throughput_req_mbps,
+                round(data_rate_mbps, 2), target, user.is_satisfied,
+                getattr(user, "_migration_penalty_applied", False),
+                getattr(user, "_migration_overhead_active", False),
+            ))
+            # Reset per-step flags so a user who isn't affected next step
+            # doesn't carry a stale True forward.
+            user._migration_penalty_applied = False
+            user._migration_overhead_active = False
 
         app_keys = ["AR_VR", "streaming", "best_effort"]
         n_by_app = {a: 0 for a in app_keys}
@@ -289,7 +435,8 @@ class MetricsLogger:
         with open(os.path.join(folder, "satisfaction_users.csv"), "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["Step", "UserID", "AppType", "ThroughputReq_Mbps",
-                             "DataRate_Mbps", "Target", "Satisfied"])
+                             "DataRate_Mbps", "Target", "Satisfied",
+                             "migration_penalty_applied", "migration_overhead_active"])
             writer.writerows(self.satisfaction_users_log)
 
         with open(os.path.join(folder, "satisfaction_summary.csv"), "w", newline="") as f:
@@ -304,6 +451,14 @@ class MetricsLogger:
             writer = csv.writer(f)
             writer.writerow(["Step", "BS_ID", "CR_capacity_mbps", "CR_load_mbps", "CR_utilization"])
             writer.writerows(self.cr_utilization_log)
+
+        # Migration-cost overlay metric — informational only (RQ2 future
+        # discussion), never fed into satisfaction or reward. All-zero when
+        # migration_cost_mode is None or "hard_cutover" (see log()).
+        with open(os.path.join(folder, "migration_overhead.csv"), "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Step", "migration_overhead_mbps"])
+            writer.writerows(self.migration_overhead_log)
 
     def _save_csv(self, path, data):
         with open(path, "w", newline="") as f:
@@ -324,6 +479,20 @@ class Simulator:
         self.cr_agent = None      # set externally to enable dynamic CR placement
         self.dynamic_rn = True    # set to False in headless runs to disable auto add/remove RNs
         self.user_move_range = 5  # max |dx|,|dy| per step; set from config["user_mobility"] in build_simulation
+        # Migration-cost model, eval only (dissertation Ch.7). None reproduces
+        # exact pre-existing behaviour and MUST stay None during train_rn /
+        # train_cr — see run_experiment.py's --migration-mode validation.
+        self.migration_cost_mode = None  # None | "hard_cutover" | "make_before_break"
+
+        # 2x2 factorial design (dissertation Ch.7 M0-M3): CR admission order
+        # and radio-rate sharing, each independently switchable and each
+        # active in ALL modes (unlike migration_cost_mode above, these change
+        # user.is_satisfied and therefore the RN/CR reward signal itself, so
+        # they must be set consistently for train_rn, train_cr, AND eval).
+        # M0 = both left at these defaults, reproducing the exact pre-factorial
+        # behaviour the existing M0 Q-tables/results were produced under.
+        self.cr_admission_policy = "fcfs"    # "fcfs" (M0/M2) | "priority" (M1/M3)
+        self.radio_allocation    = "equal_share"  # "equal_share" (M0/M1) | "proportional" (M2/M3)
 
     def add_base_station(self, bs):
         self.base_stations.append(bs)
@@ -340,6 +509,12 @@ class Simulator:
     def simulate_step(self):
         self.timestep += 1
         self.debug_logs.clear()
+
+        # Propagate the 2x2 factorial flags every step (cheap) so a script
+        # can flip them on self before any step and have it take effect
+        # immediately, consistently across train_rn/train_cr/eval.
+        self.metrics.admission_policy = self.cr_admission_policy
+        self.metrics.radio_allocation = self.radio_allocation
 
         for user in self.users:
             r = self.user_move_range
@@ -443,9 +618,37 @@ class Simulator:
                     current_state,
                 )
             action = self.cr_agent.select_action(current_state)
+
+            # Migration-cost bookkeeping (eval only): snapshot which BS carry
+            # a CR *before* apply_action, purely by reading existing state —
+            # apply_action() itself is completely untouched, for every
+            # cr_agent type (CRPlacementAgent or a baseline strategy).
+            prev_cr_by_bs_id = {}
+            if self.migration_cost_mode is not None:
+                prev_cr_by_bs_id = {
+                    bs.id: bs.compute_resource for bs in self.base_stations
+                    if bs.has_compute_resource and bs.compute_resource is not None
+                }
+
             self.cr_agent.apply_action(action)
             self.cr_agent.prev_state = current_state
             self.cr_agent.prev_action = action
+
+            if self.migration_cost_mode is not None:
+                still_active_ids = {bs.id for bs in self.base_stations if bs.has_compute_resource}
+                lost_bs_ids = set()
+                lost_capacity_mbps = 0.0
+                for bs_id, cr in prev_cr_by_bs_id.items():
+                    if bs_id not in still_active_ids:
+                        lost_bs_ids.add(bs_id)
+                        lost_capacity_mbps += cr.capacity_mbps
+                self.metrics.migration_cost_mode = self.migration_cost_mode
+                self.metrics.migration_lost_bs_ids = lost_bs_ids
+                self.metrics.migration_lost_capacity_mbps = lost_capacity_mbps
+            else:
+                self.metrics.migration_cost_mode = None
+                self.metrics.migration_lost_bs_ids = set()
+                self.metrics.migration_lost_capacity_mbps = 0.0
 
         self.metrics.log(self.timestep, self.users)
 

@@ -111,12 +111,37 @@ def main():
     )
     parser.add_argument("--warmup", type=int, default=50,
                         help="Steps excluded from cr_reward.csv logging (default: 50)")
+    parser.add_argument(
+        "--migration-mode", choices=("hard_cutover", "make_before_break"), default=None,
+        metavar="MODE",
+        help="CR migration-cost model, --mode eval only (default: none, current "
+             "behaviour). 'hard_cutover': users anchored to a BS that just lost "
+             "its CR are forced unsatisfied for that step. 'make_before_break': "
+             "does not affect satisfaction; logs migration_overhead_mbps instead.",
+    )
+    parser.add_argument(
+        "--cr-admission-policy", choices=("fcfs", "priority"), default=None,
+        metavar="POLICY",
+        help="2x2 factorial (Ch.7 M0-M3), valid in ANY --mode since it changes "
+             "the reward signal used during training. Default: scenario config's "
+             "cr_admission_policy, itself 'fcfs' (M0) unless the config overrides it.",
+    )
+    parser.add_argument(
+        "--radio-allocation", choices=("equal_share", "proportional"), default=None,
+        metavar="ALLOCATION",
+        help="2x2 factorial (Ch.7 M0-M3), valid in ANY --mode since it changes "
+             "the reward signal used during training. Default: scenario config's "
+             "radio_allocation, itself 'equal_share' (M0) unless the config overrides it.",
+    )
     args = parser.parse_args()
 
     # ── Argument validation ───────────────────────────────────────────
     _is_baseline = args.strategy is not None and args.strategy != "rl"
     if args.strategy is not None and args.strategy != "rl" and args.mode != "eval":
         parser.error("--strategy is only valid with --mode eval")
+    if args.migration_mode is not None and args.mode != "eval":
+        parser.error("--migration-mode is only valid with --mode eval "
+                     "(migration cost is never modelled during train_rn/train_cr)")
 
     if not _is_baseline:
         # RL path: cr-qtable required for eval
@@ -153,8 +178,13 @@ def main():
         pass
 
     config = load_config(args.scenario)
-    sim = build_simulation(config)
+    sim = build_simulation(config)  # sets sim.cr_admission_policy / radio_allocation from config (M0 defaults)
     sim.dynamic_rn = False
+    sim.migration_cost_mode = args.migration_mode  # None outside --mode eval (validated above)
+    if args.cr_admission_policy is not None:
+        sim.cr_admission_policy = args.cr_admission_policy
+    if args.radio_allocation is not None:
+        sim.radio_allocation = args.radio_allocation
 
     # ── Agent / strategy setup ────────────────────────────────────────
     if _is_baseline:

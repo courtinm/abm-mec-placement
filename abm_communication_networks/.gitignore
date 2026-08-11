@@ -5,6 +5,8 @@ models/
 metrics/
 resultats/
 baseline_comparison/
+admission_policy_comparison/
+migration_cost_comparison/
 sim_log.csv
 network_visualization_step_5.png
 

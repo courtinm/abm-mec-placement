@@ -23,6 +23,11 @@ def build_simulation(config=None):
     sim = Simulator(grid_size=config.get("grid_size", 100))
     mobility_move_range = {"low": 2, "high": 5}
     sim.user_move_range = mobility_move_range.get(config.get("user_mobility", "high"), 5)
+    # 2x2 factorial (Ch.7 M0-M3): config-level default, overridable after
+    # build_simulation() returns (e.g. by the factorial sweep scripts) without
+    # needing a separate config file per condition. Defaults reproduce M0.
+    sim.cr_admission_policy = config.get("cr_admission_policy", "fcfs")
+    sim.radio_allocation    = config.get("radio_allocation", "equal_share")
 
     for i, bs_cfg in enumerate(config["base_stations"]):
         bs = BaseStation(
