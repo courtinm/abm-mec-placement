@@ -1,0 +1,59 @@
+CONFIG = {
+    "grid_size": 100,
+    "app_mix": {"AR_VR": 0.5, "streaming": 0.4, "best_effort": 0.1},
+    "n_users": 80,
+    "user_mobility": "low",
+    # 8 BS in a reduced version of urban_large_N12's 4x3 grid: 2 rows (y=10, y=85)
+    # of 4 columns (x=10,35,60,85), alternating macro/small -> 4 macro + 4 small.
+    "base_stations": [
+        {"x": 10, "y": 10, "type": "macro", "capacity": 50, "has_compute_resource": True, "cr_capacity_mbps": 100},
+        {"x": 35, "y": 10, "type": "small", "capacity": 30, "has_compute_resource": False},
+        {"x": 60, "y": 10, "type": "macro", "capacity": 50, "has_compute_resource": False},
+        {"x": 85, "y": 10, "type": "small", "capacity": 30, "has_compute_resource": False},
+        {"x": 10, "y": 85, "type": "macro", "capacity": 50, "has_compute_resource": False},
+        {"x": 35, "y": 85, "type": "small", "capacity": 30, "has_compute_resource": False},
+        {"x": 60, "y": 85, "type": "macro", "capacity": 50, "has_compute_resource": False},
+        {"x": 85, "y": 85, "type": "small", "capacity": 30, "has_compute_resource": False},
+    ],
+    "relay_nodes": [
+        {"x": 22, "y": 30, "throughput": 30},
+        {"x": 74, "y": 30, "throughput": 30},
+        {"x": 22, "y": 65, "throughput": 30},
+        {"x": 74, "y": 65, "throughput": 30},
+    ],
+    "cr_placement": {
+        "k": 4,
+        "cr_capacity_mbps": 100.0,
+        "rl_hyperparams": {
+            "epsilon_0": 0.8,
+            "epsilon_min": 0.1,
+            "epsilon_decay": 0.999,
+            "alpha_0": 0.1,
+            "alpha_min": 0.01,
+            "alpha_decay": 0.999,
+            "reward_shaping_lambda": 0.0,
+        },
+    },
+    # Same 18 obstacles as urban_large_N12 (grid-based, not tied to BS count) —
+    # kept identical for consistency across the urban_xl / urban_large_N12 comparison.
+    "obstacles": [
+        {"x": 18, "y": 18, "size": "small"},
+        {"x": 30, "y": 15, "size": "large"},
+        {"x": 55, "y": 20, "size": "small"},
+        {"x": 70, "y": 18, "size": "large"},
+        {"x": 82, "y": 30, "size": "small"},
+        {"x": 20, "y": 42, "size": "large"},
+        {"x": 35, "y": 38, "size": "small"},
+        {"x": 50, "y": 48, "size": "large"},
+        {"x": 67, "y": 42, "size": "small"},
+        {"x": 84, "y": 45, "size": "large"},
+        {"x": 18, "y": 70, "size": "small"},
+        {"x": 33, "y": 72, "size": "large"},
+        {"x": 52, "y": 66, "size": "small"},
+        {"x": 70, "y": 72, "size": "large"},
+        {"x": 84, "y": 66, "size": "small"},
+        {"x": 25, "y": 88, "size": "large"},
+        {"x": 47, "y": 84, "size": "small"},
+        {"x": 73, "y": 86, "size": "large"},
+    ],
+}
