@@ -1,0 +1,16 @@
+scenario,strategy,n_seeds,Rate_Global_mean,Rate_Global_ci95,Rate_AR_VR_mean,Rate_AR_VR_ci95,Rate_Streaming_mean,Rate_Streaming_ci95,Rate_BestEffort_mean,Rate_BestEffort_ci95
+urban_light,No-CR,20,0.3024,0.0546,0.0,0.0,0.0003,0.0002,0.9912,0.0034
+urban_light,Random,20,0.6544,0.031,0.3744,0.0236,0.5707,0.0161,0.987,0.0082
+urban_light,Static (macro BSs),20,0.6164,0.0421,0.3634,0.0463,0.4955,0.0417,0.9912,0.0034
+urban_light,Greedy (oracle),20,0.7215,0.0362,0.4315,0.0309,0.694,0.0345,0.9912,0.0034
+urban_light,RL Agent (Q-learning),20,0.6321,0.0448,0.3616,0.0406,0.5361,0.0436,0.9912,0.0034
+urban_medium,No-CR,20,0.2049,0.0408,0.0,0.0,0.0004,0.0002,0.9983,0.001
+urban_medium,Random,20,0.4502,0.0359,0.2228,0.0152,0.4143,0.0234,0.9979,0.0014
+urban_medium,Static (macro BSs),20,0.4524,0.0353,0.2433,0.0192,0.3942,0.039,0.9983,0.001
+urban_medium,Greedy (oracle),20,0.5351,0.0334,0.3163,0.0257,0.5311,0.0319,0.9983,0.001
+urban_medium,RL Agent (Q-learning),20,0.4752,0.0295,0.2632,0.0221,0.424,0.0483,0.9983,0.001
+urban_dense,No-CR,20,0.101,0.0189,0.0,0.0,0.0007,0.0003,0.9451,0.0975
+urban_dense,Random,20,0.4023,0.0199,0.2946,0.01,0.3889,0.0159,0.9451,0.0975
+urban_dense,Static (macro BSs),20,0.4285,0.0254,0.317,0.0171,0.4294,0.0239,0.9451,0.0975
+urban_dense,Greedy (oracle),20,0.4789,0.0211,0.3491,0.0146,0.5162,0.0165,0.9451,0.0975
+urban_dense,RL Agent (Q-learning),20,0.3832,0.0228,0.28,0.0161,0.3592,0.0174,0.9451,0.0975

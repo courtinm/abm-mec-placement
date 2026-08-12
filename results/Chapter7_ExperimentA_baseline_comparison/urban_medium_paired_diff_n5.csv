@@ -1,0 +1,5 @@
+comparison,mean_diff,std_diff,ci95,n,significant_at_95
+RL Agent - No-CR,0.2398,0.0364,0.0319,5,True
+RL Agent - Random,0.0053,0.0372,0.0326,5,False
+RL Agent - Static,0.0054,0.0215,0.0189,5,False
+RL Agent - Greedy (oracle),-0.0918,0.0466,0.0409,5,True

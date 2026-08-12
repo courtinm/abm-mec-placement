@@ -1,0 +1,11 @@
+# Core simulation
+numpy
+pygame          # interactive visualisation (main.py)
+
+# Experiments / analysis / plotting
+pandas
+matplotlib
+scipy           # scipy.stats, used by plots/plot_results.py
+
+# Tests
+pytest

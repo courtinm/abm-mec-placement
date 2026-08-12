@@ -1,0 +1,3 @@
+scenario,rate_global_mean,rate_global_ci95,mean_bs_switched_per_step,mean_bs_switched_ci95,volatile_step_frac_mean,volatile_step_frac_ci95
+urban_medium,0.4752,0.0295,0.6141,0.1773,0.2693,0.0734
+urban_controlled,0.4372,0.0393,1.0257,0.1913,0.3952,0.0667

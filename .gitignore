@@ -1,0 +1,17 @@
+# Generated experiment outputs, regenerate with run_experiment.py
+logs/
+models/
+output/
+baseline_comparison/
+admission_policy_comparison/
+migration_cost_comparison/
+
+# Generated plots, regenerate with plots/plot_results.py
+plots/*.png
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+results/
