@@ -1,0 +1,5 @@
+variant,tseed,dominant_state_hit_rate_pct,rl_minus_no-cr_mean_diff,rl_minus_no-cr_ci95,rl_minus_no-cr_significant,rl_minus_random_mean_diff,rl_minus_random_ci95,rl_minus_random_significant,rl_minus_static_mean_diff,rl_minus_static_ci95,rl_minus_static_significant,rl_minus_greedy_oracle_mean_diff,rl_minus_greedy_oracle_ci95,rl_minus_greedy_oracle_significant
+urban_xl_lambda0,0,73.08,0.2191,0.0075,True,0.0244,0.0049,True,0.0122,0.0047,True,-0.0416,0.0047,True
+urban_xl_lambda0,1,81.48,0.209,0.0074,True,0.0143,0.0077,True,0.0021,0.0088,False,-0.0517,0.0069,True
+urban_xl_lambda0,2,78.7,0.2239,0.0091,True,0.0291,0.0063,True,0.0169,0.0071,True,-0.0369,0.0075,True
+urban_xl_lambda01,0,73.08,0.2191,0.0075,True,0.0244,0.0049,True,0.0122,0.0047,True,-0.0416,0.0047,True

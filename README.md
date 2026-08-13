@@ -13,7 +13,8 @@ documents the code that produced them.
 ## Status of this repository
 
 Everything needed to reproduce **Chapters 3-7** (system model, MDP formulation, baselines,
-Experiments A-D) is complete, runnable, and verified to run end to end.
+Experiments A-D, and Section 7.8's robustness-at-scale runs) is complete, runnable, and has been
+executed end to end.
 
 - The raw outputs of that pipeline (CSV logs, trained Q-tables, figures behind every table and
   figure in Chapter 7) are committed under
@@ -24,13 +25,12 @@ Experiments A-D) is complete, runnable, and verified to run end to end.
   re-running the scripts below. A static copy is committed under `results/` instead, since a full
   run takes real compute time (thousands of training steps × 3 scenarios × up to 20 eval seeds per
   condition).
-- **Section 7.8** ("Robustness at Larger Network Scale") tooling is present for both Urban-N12 and
-  Urban-XL - scripts, config files, and the state-coverage/policy-snapshot instrumentation in
-  `CRPlacementAgent` - and has been smoke-tested end to end. Commands are under
+- **Section 7.8** ("Robustness at Larger Network Scale") has been run to completion for both
+  Urban-N12 (3 train seeds × 2 admission-policy conditions) and Urban-XL (3 train seeds ×
+  2 reward-shaping variants). Results are committed under [`results/N12/`](results/N12/) (Table
+  7.13-style paired-diff CSVs and figures) and [`results/Urban-XL/`](results/Urban-XL/) (Tables
+  7.14/7.15: training diagnostics and RL-vs-baselines paired difference). Commands are under
   [Reproducing the dissertation's results](#reproducing-the-dissertations-results).
-- `results/` does not yet include a Section 7.8 output folder: the full (non-toy) training runs -
-  3 seeds × 2 conditions for Urban-N12, 3 seeds × 2 variants for Urban-XL, each thousands of
-  training steps - have not been executed.
 
 ## Repository layout
 
@@ -64,7 +64,8 @@ abm_communication_networks/
 │   ├── analyze_experiment_C_controlled.py  # Experiment C: controlled mobility comparison (§7.5.2)
 │   ├── paired_diff_experimentA.py   # Paired-difference test, RL vs. each baseline, all 3 scenarios
 │   ├── paired_diff_urban_medium.py  # Same test, urban_medium only (finer-grained development version)
-│   └── factorial_analysis.py        # Experiment D 2×2 factorial decomposition (Eq. 6.4-6.6, §7.7)
+│   ├── factorial_analysis.py        # Experiment D 2×2 factorial decomposition (Eq. 6.4-6.6, §7.7)
+│   └── analyze_urban_xl.py          # §7.8.3/7.8.4: Urban-XL training diagnostics + paired diff (Tables 7.14-7.15)
 ├── plots/
 │   └── plot_results.py      # Shared figure-generation functions (training curves, ΔQ, bar charts…)
 └── tests/
@@ -171,9 +172,9 @@ python analysis/analyze_experiment_C_controlled.py     # controlled comparison (
 
 ```bash
 # Retrain and evaluate the three non-baseline conditions (M1, M2, M3)
-python experiments/generate_results.py --cr-admission-policy priority --radio-allocation equal_share    # M1
-python experiments/generate_results.py --cr-admission-policy fcfs     --radio-allocation proportional   # M2
-python experiments/generate_results.py --cr-admission-policy priority --radio-allocation proportional   # M3
+python experiments/generate_results.py --seeds 20 --cr-admission-policy priority --radio-allocation equal_share    # M1
+python experiments/generate_results.py --seeds 20 --cr-admission-policy fcfs     --radio-allocation proportional   # M2
+python experiments/generate_results.py --seeds 20 --cr-admission-policy priority --radio-allocation proportional   # M3
 
 # 2x2 factorial effect decomposition (Table 7.11), reads all four conditions
 python analysis/factorial_analysis.py
@@ -204,6 +205,7 @@ python experiments/run_urban_xl_eval.py                                 # eval, 
 python experiments/run_urban_xl_eval_tseed.py 0   # RL only, urban_xl_lambda0, per training seed
 python experiments/run_urban_xl_eval_tseed.py 1   # (repeat with 1, 2; VARIANT is hardcoded in the
 python experiments/run_urban_xl_eval_tseed.py 2   #  script, edit it to target lambda01 instead)
+python analysis/analyze_urban_xl.py               # Tables 7.14-7.15 from the resulting logs
 ```
 
 See [EXPERIMENTS.md](EXPERIMENTS.md) for what each of these runs does and why, stage by stage.
@@ -259,4 +261,4 @@ experimental design in Chapter 6 relies on).
 | §6.3.4 Paired-difference test | `analysis/paired_diff_experimentA.py` |
 | §6.3.5 / §7.7 Factorial effect decomposition | `analysis/factorial_analysis.py` |
 | §7.8 Robustness at larger scale (Urban-N12) | `experiments/run_large_n12_experiments.py`, `experiments/verify_large_n12_models.py`, `configs/urban_large_N12.py` |
-| §7.8 Robustness at larger scale (Urban-XL) | `experiments/run_urban_xl_train.py`, `experiments/run_urban_xl_eval*.py`, `configs/urban_xl_lambda*.py` |
+| §7.8 Robustness at larger scale (Urban-XL) | `experiments/run_urban_xl_train.py`, `experiments/run_urban_xl_eval*.py`, `configs/urban_xl_lambda*.py`, `analysis/analyze_urban_xl.py` |

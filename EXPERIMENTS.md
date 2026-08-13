@@ -3,7 +3,7 @@
 This document is a run-by-run log of the experimental workflow behind the dissertation
 *"Agent-Based Modelling of Compute Placement for Latency- and Throughput-Aware Mobile Edge
 Computing"*. Where `README.md` documents *what the code is*, this document documents *what was
-run, in what order, why, and what each run produced* - so that the pipeline can be followed and
+run, in what order, why, and what each run produced*, so that the pipeline can be followed and
 reproduced stage by stage rather than reverse-engineered from the scripts.
 
 All commands are run from `abm_communication_networks/` (the project root). All scripts are
@@ -248,7 +248,7 @@ python experiments/run_urban_xl_eval_tseed.py 2
 `state_coverage_checkpoints.csv`, `policy_snapshots/*.pkl`), `logs/eval/{strategy or
 rl_tseed{0,1,2}}/s{0..19}/` (RL runs including `eval_state_coverage.csv`).
 
-`results/` has no Urban-XL folder yet - see README.md, [Status of this repository](README.md#status-of-this-repository).
+The resulting `results/N12/` and `results/Urban-XL/` folders are committed - see README.md, [Status of this repository](README.md#status-of-this-repository).
 
 ---
 

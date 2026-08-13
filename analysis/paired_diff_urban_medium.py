@@ -12,9 +12,10 @@ agent and each baseline:
 
     diff_i = satisfaction_RL(seed_i) - satisfaction_X(seed_i)
 
-and reports mean_diff +/- 1.96 * std(diff) / sqrt(n), a paired CI that
-cancels out the seed-to-seed noise shared by both strategies (same seed ->
-same users for both).
+and reports mean_diff +/- t_crit(df=n-1) * std(diff) / sqrt(n) (95% paired CI,
+Student's t rather than the z=1.96 normal approximation -- see stats_utils.py),
+which cancels out the seed-to-seed noise shared by both strategies (same seed
+-> same users for both).
 
 Reuses the cached per-(strategy, seed) eval logs produced by
 compare_strategies_urban_medium.py -- run that script first (with N_SEEDS=20)
@@ -33,10 +34,14 @@ Outputs (in baseline_comparison/urban_medium/)
 """
 
 import os
+import sys
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from stats_utils import ci95 as _ci95
 
 EVAL_DIR    = os.path.join("baseline_comparison", "urban_medium", "eval")
 OUTPUT_ROOT = os.path.join("baseline_comparison", "urban_medium")
@@ -62,11 +67,6 @@ def _seed_mean(strategy_key, seed):
     df = pd.read_csv(path)
     df = df[df["Step"] > WARMUP]
     return float(df["Rate_Global"].mean())
-
-
-def _ci95(values):
-    n = len(values)
-    return 0.0 if n < 2 else 1.96 * float(np.std(values, ddof=1)) / np.sqrt(n)
 
 
 def paired_diffs(seeds):

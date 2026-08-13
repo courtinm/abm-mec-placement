@@ -361,6 +361,10 @@ def run_eval_strategy(scenario, strategy_name, steps, seed, models_dir, logs_dir
     )
     if hasattr(strategy, "_users"):
         strategy._users = sim.users
+    if hasattr(strategy, "radio_allocation"):
+        strategy.radio_allocation = sim.radio_allocation
+    if hasattr(strategy, "cr_admission_policy"):
+        strategy.cr_admission_policy = sim.cr_admission_policy
     sim.cr_agent = strategy
 
     for _ in range(steps):

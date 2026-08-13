@@ -153,6 +153,10 @@ def run_eval(scenario, strategy_key, mode, seed, models_dir, out_dir):
                                  k=cr_cfg.get("k", 2), cr_capacity_mbps=cr_cfg.get("cr_capacity_mbps", 100.0))
         if hasattr(strategy, "_users"):
             strategy._users = sim.users
+        if hasattr(strategy, "radio_allocation"):
+            strategy.radio_allocation = sim.radio_allocation
+        if hasattr(strategy, "cr_admission_policy"):
+            strategy.cr_admission_policy = sim.cr_admission_policy
         sim.cr_agent = strategy
 
     sim.migration_cost_mode = mode  # None | "hard_cutover" | "make_before_break"

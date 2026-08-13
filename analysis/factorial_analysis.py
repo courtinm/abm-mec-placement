@@ -29,7 +29,7 @@ the formal interaction estimate: if they diverge sharply, that IS the
 interaction (not independent confirmation of it, but a legibility aid).
 
 Each effect series is then treated exactly like the paired difference d_i in
-Eq. 6.3: mean +/- 1.96 * sigma / sqrt(n).
+Eq. 6.3: mean +/- t_crit(df=n-1) * sigma / sqrt(n) (see stats_utils.py).
 
 Usage
 -----
@@ -53,9 +53,13 @@ Outputs
 
 import argparse
 import os
+import sys
 
 import numpy as np
 import pandas as pd
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from stats_utils import ci95 as _ci95
 
 SCENARIOS_DEFAULT  = ["urban_light", "urban_medium", "urban_dense"]
 STRATEGIES_DEFAULT = ["no_cr", "random", "static", "exhaustive_greedy", "trained"]
@@ -89,11 +93,6 @@ def _seed_means(scenario, condition, strategy_key, seeds, app_col):
         df = df[df["Step"] > WARMUP]
         means.append(float(df[app_col].mean()))
     return means
-
-
-def _ci95(values):
-    n = len(values)
-    return 0.0 if n < 2 else 1.96 * float(np.std(values, ddof=1)) / np.sqrt(n)
 
 
 def compute_effects(scenario, strategy_key, app_col, seeds):

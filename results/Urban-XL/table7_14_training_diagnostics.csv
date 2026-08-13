@@ -1,0 +1,5 @@
+variant,tseed,states_visited,states_visited_pct,growth_final_5000_steps_pct,dominant_state,dominant_state_pct_of_training,states_visited_gt100,std_q_states_gt100_visits,std_q_states_lt20_visits
+urban_xl_lambda0,0,45,0.6859,2.27,2|2|2|2|2|2|2|2,77.85,8,0.1929,0.007
+urban_xl_lambda0,1,49,0.7468,2.08,2|2|2|2|2|2|2|2,77.84,8,0.1877,0.0063
+urban_xl_lambda0,2,55,0.8383,3.77,2|2|2|2|2|2|2|2,74.44,8,0.2065,0.0089
+urban_xl_lambda01,0,45,0.6859,2.27,2|2|2|2|2|2|2|2,77.85,8,0.2779,0.0101

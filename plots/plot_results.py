@@ -41,6 +41,9 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 from scipy import stats
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from stats_utils import ci95 as _ci95
+
 # ── Global style ─────────────────────────────────────────────────────────────
 
 plt.style.use("seaborn-v0_8-whitegrid")
@@ -113,12 +116,6 @@ def _load(path: str, required_cols=None) -> pd.DataFrame | None:
 
 def _moving_avg(series: pd.Series, window: int) -> pd.Series:
     return series.rolling(window, center=True, min_periods=1).mean()
-
-
-def _ci95(values) -> float:
-    """95 % CI half-width = 1.96 * SEM."""
-    n = len(values)
-    return 0.0 if n < 2 else 1.96 * np.std(values, ddof=1) / np.sqrt(n)
 
 
 def _collect_satisfaction(strategy_dir: str, warmup: int) -> list[float]:

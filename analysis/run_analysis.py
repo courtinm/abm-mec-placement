@@ -15,8 +15,9 @@ import statistics
 import sys
 
 # Allow `python analysis/run_analysis.py` to find the project-root packages
-# (plots/) regardless of the current directory.
+# (plots/, stats_utils) regardless of the current directory.
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from stats_utils import ci95 as _ci95
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -31,12 +32,8 @@ def _load_col(path, col):
 def _mean_ci(values):
     if not values:
         return None, None
-    n = len(values)
     m = statistics.mean(values)
-    if n < 2:
-        return m, 0.0
-    ci = 1.96 * statistics.stdev(values) / n ** 0.5
-    return m, ci
+    return m, _ci95(values)
 
 
 def _section(title):

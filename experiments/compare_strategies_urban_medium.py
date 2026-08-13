@@ -168,6 +168,10 @@ def run_eval_baseline(strategy_name, seed, config, out_dir):
     )
     if hasattr(strategy, "_users"):
         strategy._users = sim.users
+    if hasattr(strategy, "radio_allocation"):
+        strategy.radio_allocation = sim.radio_allocation
+    if hasattr(strategy, "cr_admission_policy"):
+        strategy.cr_admission_policy = sim.cr_admission_policy
     sim.cr_agent = strategy
 
     for _ in range(EVAL_STEPS):

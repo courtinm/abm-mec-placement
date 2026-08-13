@@ -27,11 +27,15 @@ Outputs (in output/)
 """
 
 import os
+import sys
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from stats_utils import ci95 as _ci95
 
 RESULTS_ROOT = "output"
 SCENARIOS    = ["urban_medium", "urban_controlled"]
@@ -50,11 +54,6 @@ SCENARIO_COLORS = {
 
 plt.style.use("seaborn-v0_8-whitegrid")
 plt.rcParams.update({"font.size": 12, "figure.dpi": 100})
-
-
-def _ci95(values):
-    n = len(values)
-    return 0.0 if n < 2 else 1.96 * float(np.std(values, ddof=1)) / np.sqrt(n)
 
 
 def _eval_dir(scenario, seed):

@@ -83,9 +83,15 @@ def _attach_strategy(sim, config, name):
 
     strategy = make_strategy(name, sim.base_stations, k=k, cr_capacity_mbps=cr_capacity)
 
-    # GreedyOptimalStrategy needs a live reference to the users list
+    # GreedyOptimalStrategy needs a live reference to the users list, and
+    # (Ch.7 M0-M3 factorial) the actual radio_allocation/cr_admission_policy
+    # in effect, so its internal _score() matches what the simulator applies.
     if hasattr(strategy, "_users"):
         strategy._users = sim.users
+    if hasattr(strategy, "radio_allocation"):
+        strategy.radio_allocation = sim.radio_allocation
+    if hasattr(strategy, "cr_admission_policy"):
+        strategy.cr_admission_policy = sim.cr_admission_policy
 
     sim.cr_agent = strategy
     return strategy

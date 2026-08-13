@@ -11,6 +11,9 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from stats_utils import ci95
+
 SCENARIO = "urban_large_N12"
 TRAIN_SEEDS = [0, 1, 2]
 EVAL_SEEDS = list(range(20))
@@ -42,13 +45,6 @@ STRATEGY_LABELS = {
 
 plt.style.use("seaborn-v0_8-whitegrid")
 plt.rcParams.update({"font.size": 12, "figure.dpi": 100})
-
-
-def ci95(values):
-    n = len(values)
-    if n < 2:
-        return 0.0
-    return 1.96 * float(np.std(values, ddof=1)) / math.sqrt(n)
 
 
 RUN_EXPERIMENT = Path(__file__).with_name("run_experiment.py")

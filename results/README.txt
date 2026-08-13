@@ -80,9 +80,29 @@ Chapter7_complete_data_by_scenario/
     satisfaction_users.csv, rn{id}_learning.csv, rn{id}_q.pkl,
     rn{id}_epsilon.pkl, and the per-seed debug logs.
 
-    Not included: the Section 7.8 results (robustness at larger scale,
-    Urban-XL/N=8 and Urban-N12, Tables 7.12-7.15). The training/evaluation
-    scripts and configs for both are present in the repository and have
-    been smoke-tested (see README.md, "Status of this repository", and
-    EXPERIMENTS.md, Stage 7); the full-scale training runs themselves have
-    not been executed, so there is no corresponding output folder here yet.
+    Section 7.8 (robustness at larger scale, Tables 7.12-7.15) is not
+    duplicated here: see N12/ and Urban-XL/ below instead.
+
+N12/
+    summary_metrics.csv
+        -> Table 7.12: Urban-N12 summary metrics (RL vs. baselines).
+    fcfs/, priority/
+        -> Per admission-policy condition: paired_diff_rl_vs_baselines_{cond}.csv
+           (RL vs. each baseline, Table 7.12) and the training-curve /
+           delta-Q-convergence figures for that condition.
+    paired_diff_priority_vs_fcfs_rl.csv
+        -> RL agent under priority vs. fcfs admission (Section 7.8.2).
+    Produced by experiments/run_large_n12_experiments.py +
+    experiments/verify_large_n12_models.py, config configs/urban_large_N12.py.
+
+Urban-XL/
+    table7_14_training_diagnostics.csv
+        -> Table 7.14: state-coverage and Q-value-spread diagnostics for the
+           CR agent trained at Urban-XL scale (N=8 base stations), per
+           reward-shaping variant (lambda=0 / lambda=0.1) and training seed.
+    table7_15_eval_paired_diff.csv
+        -> Table 7.15: RL vs. baselines paired difference on post-warmup
+           global satisfaction, same variants/seeds.
+    Produced by experiments/run_urban_xl_train.py,
+    experiments/run_urban_xl_eval.py / run_urban_xl_eval_tseed.py, and
+    analysis/analyze_urban_xl.py, configs configs/urban_xl_lambda{0,01}.py.
